@@ -25,11 +25,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "porting.h"
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__)  || defined(__NetBSD__) || defined(__DragonFly__)
 	#include <sys/types.h>
 	#include <sys/sysctl.h>
 #elif defined(_WIN32)
+	#include <windows.h>
+	#include <wincrypt.h>
 	#include <algorithm>
+	#include <shlwapi.h>
 #endif
 #if !defined(_WIN32)
 	#include <unistd.h>
@@ -39,14 +42,6 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	#define _PSTAT64
 	#include <sys/pstat.h>
 #endif
-#if !defined(_WIN32) && !defined(__APPLE__) && \
-	!defined(__ANDROID__) && !defined(SERVER)
-	#define XORG_USED
-#endif
-#ifdef XORG_USED
-	#include <X11/Xlib.h>
-	#include <X11/Xutil.h>
-#endif
 
 #include "config.h"
 #include "debug.h"
@@ -55,6 +50,8 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "util/string.h"
 #include "settings.h"
 #include <list>
+#include <cstdarg>
+#include <cstdio>
 
 namespace porting
 {
@@ -65,7 +62,7 @@ namespace porting
 
 bool g_killed = false;
 
-bool * signal_handler_killstatus(void)
+bool *signal_handler_killstatus()
 {
 	return &g_killed;
 }
@@ -73,26 +70,32 @@ bool * signal_handler_killstatus(void)
 #if !defined(_WIN32) // POSIX
 	#include <signal.h>
 
-void sigint_handler(int sig)
+void signal_handler(int sig)
 {
-	if(!g_killed) {
-		dstream<<DTIME<<"INFO: sigint_handler(): "
-				<<"Ctrl-C pressed, shutting down."<<std::endl;
+	if (!g_killed) {
+		if (sig == SIGINT) {
+			dstream << "INFO: signal_handler(): "
+				<< "Ctrl-C pressed, shutting down." << std::endl;
+		} else if (sig == SIGTERM) {
+			dstream << "INFO: signal_handler(): "
+				<< "got SIGTERM, shutting down." << std::endl;
+		}
 
 		// Comment out for less clutter when testing scripts
-		/*dstream<<DTIME<<"INFO: sigint_handler(): "
-				<<"Printing debug stacks"<<std::endl;
+		/*dstream << "INFO: sigint_handler(): "
+				<< "Printing debug stacks" << std::endl;
 		debug_stacks_print();*/
 
 		g_killed = true;
 	} else {
-		(void)signal(SIGINT, SIG_DFL);
+		(void)signal(sig, SIG_DFL);
 	}
 }
 
 void signal_handler_init(void)
 {
-	(void)signal(SIGINT, sigint_handler);
+	(void)signal(SIGINT, signal_handler);
+	(void)signal(SIGTERM, signal_handler);
 }
 
 #else // _WIN32
@@ -105,8 +108,8 @@ BOOL WINAPI event_handler(DWORD sig)
 	case CTRL_CLOSE_EVENT:
 	case CTRL_LOGOFF_EVENT:
 	case CTRL_SHUTDOWN_EVENT:
-		if (g_killed == false) {
-			dstream << DTIME << "INFO: event_handler(): "
+		if (!g_killed) {
+			dstream << "INFO: event_handler(): "
 				<< "Ctrl+C, Close Event, Logoff Event or Shutdown Event,"
 				" shutting down." << std::endl;
 			g_killed = true;
@@ -130,136 +133,15 @@ void signal_handler_init(void)
 
 
 /*
-	Multithreading support
-*/
-int getNumberOfProcessors()
-{
-#if defined(_SC_NPROCESSORS_ONLN)
-
-	return sysconf(_SC_NPROCESSORS_ONLN);
-
-#elif defined(__FreeBSD__) || defined(__APPLE__)
-
-	unsigned int len, count;
-	len = sizeof(count);
-	return sysctlbyname("hw.ncpu", &count, &len, NULL, 0);
-
-#elif defined(_GNU_SOURCE)
-
-	return get_nprocs();
-
-#elif defined(_WIN32)
-
-	SYSTEM_INFO sysinfo;
-	GetSystemInfo(&sysinfo);
-	return sysinfo.dwNumberOfProcessors;
-
-#elif defined(PTW32_VERSION) || defined(__hpux)
-
-	return pthread_num_processors_np();
-
-#else
-
-	return 1;
-
-#endif
-}
-
-
-#ifndef __ANDROID__
-bool threadBindToProcessor(threadid_t tid, int pnumber)
-{
-#if defined(_WIN32)
-
-	HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, 0, tid);
-	if (!hThread)
-		return false;
-
-	bool success = SetThreadAffinityMask(hThread, 1 << pnumber) != 0;
-
-	CloseHandle(hThread);
-	return success;
-
-#elif (defined(__FreeBSD__) && (__FreeBSD_version >= 702106)) \
-	|| defined(__linux) || defined(linux)
-
-	cpu_set_t cpuset;
-
-	CPU_ZERO(&cpuset);
-	CPU_SET(pnumber, &cpuset);
-	return pthread_setaffinity_np(tid, sizeof(cpuset), &cpuset) == 0;
-
-#elif defined(__sun) || defined(sun)
-
-	return processor_bind(P_LWPID, MAKE_LWPID_PTHREAD(tid),
-		pnumber, NULL) == 0;
-
-#elif defined(_AIX)
-
-	return bindprocessor(BINDTHREAD, (tid_t)tid, pnumber) == 0;
-
-#elif defined(__hpux) || defined(hpux)
-
-	pthread_spu_t answer;
-
-	return pthread_processor_bind_np(PTHREAD_BIND_ADVISORY_NP,
-		&answer, pnumber, tid) == 0;
-
-#elif defined(__APPLE__)
-
-	struct thread_affinity_policy tapol;
-
-	thread_port_t threadport = pthread_mach_thread_np(tid);
-	tapol.affinity_tag = pnumber + 1;
-	return thread_policy_set(threadport, THREAD_AFFINITY_POLICY,
-		(thread_policy_t)&tapol, THREAD_AFFINITY_POLICY_COUNT) == KERN_SUCCESS;
-
-#else
-
-	return false;
-
-#endif
-}
-#endif
-
-bool threadSetPriority(threadid_t tid, int prio)
-{
-#if defined(_WIN32)
-
-	HANDLE hThread = OpenThread(THREAD_ALL_ACCESS, 0, tid);
-	if (!hThread)
-		return false;
-
-	bool success = SetThreadPriority(hThread, prio) != 0;
-
-	CloseHandle(hThread);
-	return success;
-
-#else
-
-	struct sched_param sparam;
-	int policy;
-
-	if (pthread_getschedparam(tid, &policy, &sparam) != 0)
-		return false;
-
-	int min = sched_get_priority_min(policy);
-	int max = sched_get_priority_max(policy);
-
-	sparam.sched_priority = min + prio * (max - min) / THREAD_PRIORITY_HIGHEST;
-	return pthread_setschedparam(tid, policy, &sparam) == 0;
-
-#endif
-}
-
-
-/*
 	Path mangler
 */
 
 // Default to RUN_IN_PLACE style relative paths
 std::string path_share = "..";
 std::string path_user = "..";
+std::string path_locale = path_share + DIR_DELIM + "locale";
+std::string path_cache = path_user + DIR_DELIM + "cache";
+
 
 std::string getDataPath(const char *subpath)
 {
@@ -282,30 +164,38 @@ bool detectMSVCBuildDir(const std::string &path)
 {
 	const char *ends[] = {
 		"bin\\Release",
+		"bin\\MinSizeRel",
+		"bin\\RelWithDebInfo",
 		"bin\\Debug",
 		"bin\\Build",
 		NULL
 	};
-	return (removeStringEnd(path, ends) != "");
+	return (!removeStringEnd(path, ends).empty());
 }
 
 std::string get_sysinfo()
 {
 #ifdef _WIN32
-	OSVERSIONINFO osvi;
-	std::ostringstream oss;
-	std::string tmp;
-	ZeroMemory(&osvi, sizeof(OSVERSIONINFO));
-	osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-	GetVersionEx(&osvi);
-	tmp = osvi.szCSDVersion;
-	std::replace(tmp.begin(), tmp.end(), ' ', '_');
 
-	oss << "Windows/" << osvi.dwMajorVersion << "."
-		<< osvi.dwMinorVersion;
-	if (osvi.szCSDVersion[0])
-		oss << "-" << tmp;
-	oss << " ";
+	std::ostringstream oss;
+	LPSTR filePath = new char[MAX_PATH];
+	UINT blockSize;
+	VS_FIXEDFILEINFO *fixedFileInfo;
+
+	GetSystemDirectoryA(filePath, MAX_PATH);
+	PathAppendA(filePath, "kernel32.dll");
+
+	DWORD dwVersionSize = GetFileVersionInfoSizeA(filePath, NULL);
+	LPBYTE lpVersionInfo = new BYTE[dwVersionSize];
+
+	GetFileVersionInfoA(filePath, 0, dwVersionSize, lpVersionInfo);
+	VerQueryValueA(lpVersionInfo, "\\", (LPVOID *)&fixedFileInfo, &blockSize);
+
+	oss << "Windows/"
+		<< HIWORD(fixedFileInfo->dwProductVersionMS) << '.' // Major
+		<< LOWORD(fixedFileInfo->dwProductVersionMS) << '.' // Minor
+		<< HIWORD(fixedFileInfo->dwProductVersionLS) << ' '; // Build
+
 	#ifdef _WIN64
 	oss << "x86_64";
 	#else
@@ -315,6 +205,9 @@ std::string get_sysinfo()
 	else
 		oss << "x86";
 	#endif
+
+	delete[] lpVersionInfo;
+	delete[] filePath;
 
 	return oss.str();
 #else
@@ -369,7 +262,7 @@ bool getCurrentExecPath(char *buf, size_t len)
 
 
 //// Linux
-#elif defined(linux) || defined(__linux) || defined(__linux__)
+#elif defined(__linux__)
 
 bool getCurrentExecPath(char *buf, size_t len)
 {
@@ -460,6 +353,21 @@ bool getCurrentExecPath(char *buf, size_t len)
 #endif
 
 
+//// Non-Windows
+#if !defined(_WIN32)
+
+const char *getHomeOrFail()
+{
+	const char *home = getenv("HOME");
+	// In rare cases the HOME environment variable may be unset
+	FATAL_ERROR_IF(!home,
+		"Required environment variable HOME is not set");
+	return home;
+}
+
+#endif
+
+
 //// Windows
 #if defined(_WIN32)
 
@@ -472,20 +380,27 @@ bool setSystemPaths()
 		"Failed to get current executable path");
 	pathRemoveFile(buf, '\\');
 
-	// Use ".\bin\.."
-	path_share = std::string(buf) + "\\..";
+	std::string exepath(buf);
 
-	// Use "C:\Documents and Settings\user\Application Data\<PROJECT_NAME>"
+	// Use ".\bin\.."
+	path_share = exepath + "\\..";
+	if (detectMSVCBuildDir(exepath)) {
+		// The msvc build dir schould normaly not be present if properly installed,
+		// but its usefull for debugging.
+		path_share += DIR_DELIM "..";
+	}
+
+	// Use "C:\Users\<user>\AppData\Roaming\<PROJECT_NAME_C>"
 	DWORD len = GetEnvironmentVariable("APPDATA", buf, sizeof(buf));
 	FATAL_ERROR_IF(len == 0 || len > sizeof(buf), "Failed to get APPDATA");
 
-	path_user = std::string(buf) + DIR_DELIM + PROJECT_NAME;
+	path_user = std::string(buf) + DIR_DELIM + PROJECT_NAME_C;
 	return true;
 }
 
 
 //// Linux
-#elif defined(linux) || defined(__linux)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
 
 bool setSystemPaths()
 {
@@ -507,7 +422,7 @@ bool setSystemPaths()
 	// It is identified by containing the subdirectory "builtin".
 	std::list<std::string> trylist;
 	std::string static_sharedir = STATIC_SHAREDIR;
-	if (static_sharedir != "" && static_sharedir != ".")
+	if (!static_sharedir.empty() && static_sharedir != ".")
 		trylist.push_back(static_sharedir);
 
 	trylist.push_back(bindir + DIR_DELIM ".." DIR_DELIM "share"
@@ -519,18 +434,18 @@ bool setSystemPaths()
 #endif
 
 	for (std::list<std::string>::const_iterator
-			i = trylist.begin(); i != trylist.end(); i++) {
+			i = trylist.begin(); i != trylist.end(); ++i) {
 		const std::string &trypath = *i;
 		if (!fs::PathExists(trypath) ||
 			!fs::PathExists(trypath + DIR_DELIM + "builtin")) {
-			dstream << "WARNING: system-wide share not found at \""
+			warningstream << "system-wide share not found at \""
 					<< trypath << "\""<< std::endl;
 			continue;
 		}
 
 		// Warn if was not the first alternative
 		if (i != trylist.begin()) {
-			dstream << "WARNING: system-wide share found at \""
+			warningstream << "system-wide share found at \""
 					<< trypath << "\"" << std::endl;
 		}
 
@@ -539,7 +454,7 @@ bool setSystemPaths()
 	}
 
 #ifndef __ANDROID__
-	path_user = std::string(getenv("HOME")) + DIR_DELIM "."
+	path_user = std::string(getHomeOrFail()) + DIR_DELIM "."
 		+ PROJECT_NAME;
 #endif
 
@@ -559,11 +474,11 @@ bool setSystemPaths()
 			TRUE, (UInt8 *)path, PATH_MAX)) {
 		path_share = std::string(path);
 	} else {
-		dstream << "WARNING: Could not determine bundle resource path" << std::endl;
+		warningstream << "Could not determine bundle resource path" << std::endl;
 	}
 	CFRelease(resources_url);
 
-	path_user = std::string(getenv("HOME"))
+	path_user = std::string(getHomeOrFail())
 		+ "/Library/Application Support/"
 		+ PROJECT_NAME;
 	return true;
@@ -575,7 +490,7 @@ bool setSystemPaths()
 bool setSystemPaths()
 {
 	path_share = STATIC_SHAREDIR;
-	path_user  = std::string(getenv("HOME")) + DIR_DELIM "."
+	path_user  = std::string(getHomeOrFail()) + DIR_DELIM "."
 		+ lowercase(PROJECT_NAME);
 	return true;
 }
@@ -583,6 +498,25 @@ bool setSystemPaths()
 
 #endif
 
+void migrateCachePath()
+{
+	const std::string local_cache_path = path_user + DIR_DELIM + "cache";
+
+	// Delete tmp folder if it exists (it only ever contained
+	// a temporary ogg file, which is no longer used).
+	if (fs::PathExists(local_cache_path + DIR_DELIM + "tmp"))
+		fs::RecursiveDelete(local_cache_path + DIR_DELIM + "tmp");
+
+	// Bail if migration impossible
+	if (path_cache == local_cache_path || !fs::PathExists(local_cache_path)
+			|| fs::PathExists(path_cache)) {
+		return;
+	}
+	if (!fs::Rename(local_cache_path, path_cache)) {
+		errorstream << "Failed to migrate local cache path "
+			"to system path!" << std::endl;
+	}
+}
 
 void initializePaths()
 {
@@ -627,178 +561,154 @@ void initializePaths()
 		path_share = execpath;
 		path_user  = execpath;
 	}
-
+	path_cache = path_user + DIR_DELIM + "cache";
 #else
 	infostream << "Using system-wide paths (NOT RUN_IN_PLACE)" << std::endl;
 
 	if (!setSystemPaths())
 		errorstream << "Failed to get one or more system-wide path" << std::endl;
 
-#endif
+
+#  ifdef _WIN32
+	path_cache = path_user + DIR_DELIM + "cache";
+#  else
+	// Initialize path_cache
+	// First try $XDG_CACHE_HOME/PROJECT_NAME
+	const char *cache_dir = getenv("XDG_CACHE_HOME");
+	const char *home_dir = getenv("HOME");
+	if (cache_dir) {
+		path_cache = std::string(cache_dir) + DIR_DELIM + PROJECT_NAME;
+	} else if (home_dir) {
+		// Then try $HOME/.cache/PROJECT_NAME
+		path_cache = std::string(home_dir) + DIR_DELIM + ".cache"
+			+ DIR_DELIM + PROJECT_NAME;
+	} else {
+		// If neither works, use $PATH_USER/cache
+		path_cache = path_user + DIR_DELIM + "cache";
+	}
+	// Migrate cache folder to new location if possible
+	migrateCachePath();
+#  endif // _WIN32
+#endif // RUN_IN_PLACE
 
 	infostream << "Detected share path: " << path_share << std::endl;
 	infostream << "Detected user path: " << path_user << std::endl;
+	infostream << "Detected cache path: " << path_cache << std::endl;
+
+#if USE_GETTEXT
+	bool found_localedir = false;
+#  ifdef STATIC_LOCALEDIR
+	if (STATIC_LOCALEDIR[0] && fs::PathExists(STATIC_LOCALEDIR)) {
+		found_localedir = true;
+		path_locale = STATIC_LOCALEDIR;
+		infostream << "Using locale directory " << STATIC_LOCALEDIR << std::endl;
+	} else {
+		path_locale = getDataPath("locale");
+		if (fs::PathExists(path_locale)) {
+			found_localedir = true;
+			infostream << "Using in-place locale directory " << path_locale
+				<< " even though a static one was provided "
+				<< "(RUN_IN_PLACE or CUSTOM_LOCALEDIR)." << std::endl;
+		}
+	}
+#  else
+	path_locale = getDataPath("locale");
+	if (fs::PathExists(path_locale)) {
+		found_localedir = true;
+	}
+#  endif
+	if (!found_localedir) {
+		warningstream << "Couldn't find a locale directory!" << std::endl;
+	}
+#endif  // USE_GETTEXT
 }
 
+////
+//// OS-specific Secure Random
+////
 
+#ifdef WIN32
 
-void setXorgClassHint(const video::SExposedVideoData &video_data,
-	const std::string &name)
+bool secure_rand_fill_buf(void *buf, size_t len)
 {
-#ifdef XORG_USED
-	if (video_data.OpenGLLinux.X11Display == NULL)
-		return;
+	HCRYPTPROV wctx;
 
-	XClassHint *classhint = XAllocClassHint();
-	classhint->res_name  = (char *)name.c_str();
-	classhint->res_class = (char *)name.c_str();
+	if (!CryptAcquireContext(&wctx, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+		return false;
 
-	XSetClassHint((Display *)video_data.OpenGLLinux.X11Display,
-		video_data.OpenGLLinux.X11Window, classhint);
-	XFree(classhint);
+	CryptGenRandom(wctx, len, (BYTE *)buf);
+	CryptReleaseContext(wctx, 0);
+	return true;
+}
+
+#else
+
+bool secure_rand_fill_buf(void *buf, size_t len)
+{
+	// N.B.  This function checks *only* for /dev/urandom, because on most
+	// common OSes it is non-blocking, whereas /dev/random is blocking, and it
+	// is exceptionally uncommon for there to be a situation where /dev/random
+	// exists but /dev/urandom does not.  This guesswork is necessary since
+	// random devices are not covered by any POSIX standard...
+	FILE *fp = fopen("/dev/urandom", "rb");
+	if (!fp)
+		return false;
+
+	bool success = fread(buf, len, 1, fp) == 1;
+
+	fclose(fp);
+	return success;
+}
+
+#endif
+
+void attachOrCreateConsole()
+{
+#ifdef _WIN32
+	static bool consoleAllocated = false;
+	const bool redirected = (_fileno(stdout) == -2 || _fileno(stdout) == -1); // If output is redirected to e.g a file
+	if (!consoleAllocated && redirected && (AttachConsole(ATTACH_PARENT_PROCESS) || AllocConsole())) {
+		freopen("CONOUT$", "w", stdout);
+		freopen("CONOUT$", "w", stderr);
+		consoleAllocated = true;
+	}
 #endif
 }
 
-
-////
-//// Video/Display Information (Client-only)
-////
-
-#ifndef SERVER
-
-static irr::IrrlichtDevice *device;
-
-void initIrrlicht(irr::IrrlichtDevice *device_)
+int mt_snprintf(char *buf, const size_t buf_size, const char *fmt, ...)
 {
-	device = device_;
+	// https://msdn.microsoft.com/en-us/library/bt7tawza.aspx
+	//  Many of the MSVC / Windows printf-style functions do not support positional
+	//  arguments (eg. "%1$s"). We just forward the call to vsnprintf for sane
+	//  platforms, but defer to _vsprintf_p on MSVC / Windows.
+	// https://github.com/FFmpeg/FFmpeg/blob/5ae9fa13f5ac640bec113120d540f70971aa635d/compat/msvcrt/snprintf.c#L46
+	//  _vsprintf_p has to be shimmed with _vscprintf_p on -1 (for an example see
+	//  above FFmpeg link).
+	va_list args;
+	va_start(args, fmt);
+#ifndef _MSC_VER
+	int c = vsnprintf(buf, buf_size, fmt, args);
+#else  // _MSC_VER
+	int c = _vsprintf_p(buf, buf_size, fmt, args);
+	if (c == -1)
+		c = _vscprintf_p(fmt, args);
+#endif // _MSC_VER
+	va_end(args);
+	return c;
 }
 
-v2u32 getWindowSize()
+// Load performance counter frequency only once at startup
+#ifdef _WIN32
+
+inline double get_perf_freq()
 {
-	return device->getVideoDriver()->getScreenSize();
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency(&freq);
+	return freq.QuadPart;
 }
 
+double perf_freq = get_perf_freq();
 
-std::vector<core::vector3d<u32> > getSupportedVideoModes()
-{
-	IrrlichtDevice *nulldevice = createDevice(video::EDT_NULL);
-	sanity_check(nulldevice != NULL);
-
-	std::vector<core::vector3d<u32> > mlist;
-	video::IVideoModeList *modelist = nulldevice->getVideoModeList();
-
-	u32 num_modes = modelist->getVideoModeCount();
-	for (u32 i = 0; i != num_modes; i++) {
-		core::dimension2d<u32> mode_res = modelist->getVideoModeResolution(i);
-		s32 mode_depth = modelist->getVideoModeDepth(i);
-		mlist.push_back(core::vector3d<u32>(mode_res.Width, mode_res.Height, mode_depth));
-	}
-
-	nulldevice->drop();
-
-	return mlist;
-}
-
-std::vector<irr::video::E_DRIVER_TYPE> getSupportedVideoDrivers()
-{
-	std::vector<irr::video::E_DRIVER_TYPE> drivers;
-
-	for (int i = 0; i != irr::video::EDT_COUNT; i++) {
-		if (irr::IrrlichtDevice::isDriverSupported((irr::video::E_DRIVER_TYPE)i))
-			drivers.push_back((irr::video::E_DRIVER_TYPE)i);
-	}
-
-	return drivers;
-}
-
-const char *getVideoDriverName(irr::video::E_DRIVER_TYPE type)
-{
-	static const char *driver_ids[] = {
-		"null",
-		"software",
-		"burningsvideo",
-		"direct3d8",
-		"direct3d9",
-		"opengl",
-		"ogles1",
-		"ogles2",
-	};
-
-	return driver_ids[type];
-}
-
-
-const char *getVideoDriverFriendlyName(irr::video::E_DRIVER_TYPE type)
-{
-	static const char *driver_names[] = {
-		"NULL Driver",
-		"Software Renderer",
-		"Burning's Video",
-		"Direct3D 8",
-		"Direct3D 9",
-		"OpenGL",
-		"OpenGL ES1",
-		"OpenGL ES2",
-	};
-
-	return driver_names[type];
-}
-
-#	ifndef __ANDROID__
-#		ifdef XORG_USED
-
-static float calcDisplayDensity()
-{
-	const char* current_display = getenv("DISPLAY");
-
-	if (current_display != NULL) {
-			Display * x11display = XOpenDisplay(current_display);
-
-			if (x11display != NULL) {
-				/* try x direct */
-				float dpi_height =
-						floor(DisplayHeight(x11display, 0) /
-								(DisplayHeightMM(x11display, 0) * 0.039370) + 0.5);
-				float dpi_width =
-						floor(DisplayWidth(x11display, 0) /
-								(DisplayWidthMM(x11display, 0) * 0.039370) +0.5);
-
-				XCloseDisplay(x11display);
-
-				return std::max(dpi_height,dpi_width) / 96.0;
-			}
-		}
-
-	/* return manually specified dpi */
-	return g_settings->getFloat("screen_dpi")/96.0;
-}
-
-
-float getDisplayDensity()
-{
-	static float cached_display_density = calcDisplayDensity();
-	return cached_display_density;
-}
-
-
-#		else // XORG_USED
-float getDisplayDensity()
-{
-	return g_settings->getFloat("screen_dpi")/96.0;
-}
-#		endif // XORG_USED
-
-v2u32 getDisplaySize()
-{
-	IrrlichtDevice *nulldevice = createDevice(video::EDT_NULL);
-
-	core::dimension2d<u32> deskres = nulldevice->getVideoModeList()->getDesktopResolution();
-	nulldevice -> drop();
-
-	return deskres;
-}
-#	endif // __ANDROID__
-#endif // SERVER
+#endif
 
 } //namespace porting
-

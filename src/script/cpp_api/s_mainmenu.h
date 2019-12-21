@@ -17,21 +17,19 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef S_MAINMENU_H_
-#define S_MAINMENU_H_
+#pragma once
 
 #include "cpp_api/s_base.h"
-#include <map>
+#include "util/string.h"
+#include "gui/guiMainMenu.h"
 
-class ScriptApiMainMenu
-		: virtual public ScriptApiBase
-{
+class ScriptApiMainMenu : virtual public ScriptApiBase {
 public:
 	/**
-	 * set gamedata.errormessage to inform lua of an error
-	 * @param errormessage the error message
+	 * Hand over MainMenuDataForScript to lua to inform lua of the content
+	 * @param data the data
 	 */
-	void setMainMenuErrorMessage(std::string errormessage);
+	void setMainMenuData(MainMenuDataForScript *data);
 
 	/**
 	 * process events received from formspec
@@ -43,7 +41,5 @@ public:
 	 * process field data recieved from formspec
 	 * @param fields data in field format
 	 */
-	void handleMainMenuButtons(std::map<std::string, std::string> fields);
+	void handleMainMenuButtons(const StringMap &fields);
 };
-
-#endif /* S_MAINMENU_H_ */

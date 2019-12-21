@@ -17,14 +17,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef NODEMETADATA_HEADER
-#define NODEMETADATA_HEADER
+#pragma once
 
-#include "irr_v3d.h"
-#include <string>
-#include <iostream>
-#include <vector>
-#include <map>
+#include <unordered_set>
+#include "metadata.h"
 
 /*
 	NodeMetadata stores arbitary amounts of data for special blocks.
@@ -36,38 +32,37 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 */
 
 class Inventory;
-class IGameDef;
+class IItemDefManager;
 
-class NodeMetadata
+class NodeMetadata : public Metadata
 {
 public:
-	NodeMetadata(IGameDef *gamedef);
+	NodeMetadata(IItemDefManager *item_def_mgr);
 	~NodeMetadata();
 
-	void serialize(std::ostream &os) const;
-	void deSerialize(std::istream &is);
+	void serialize(std::ostream &os, u8 version, bool disk=true) const;
+	void deSerialize(std::istream &is, u8 version);
 
 	void clear();
-
-	// Generic key/value store
-	std::string getString(const std::string &name, unsigned short recursion = 0) const;
-	void setString(const std::string &name, const std::string &var);
-	// Support variable names in values
-	std::string resolveString(const std::string &str, unsigned short recursion = 0) const;
-	std::map<std::string, std::string> getStrings() const
-	{
-		return m_stringvars;
-	}
+	bool empty() const;
 
 	// The inventory
-	Inventory* getInventory()
+	Inventory *getInventory()
 	{
 		return m_inventory;
 	}
 
+	inline bool isPrivate(const std::string &name) const
+	{
+		return m_privatevars.count(name) != 0;
+	}
+	void markPrivate(const std::string &name, bool set);
+
 private:
-	std::map<std::string, std::string> m_stringvars;
+	int countNonPrivate() const;
+
 	Inventory *m_inventory;
+	std::unordered_set<std::string> m_privatevars;
 };
 
 
@@ -75,13 +70,21 @@ private:
 	List of metadata of all the nodes of a block
 */
 
+typedef std::map<v3s16, NodeMetadata *> NodeMetadataMap;
+
 class NodeMetadataList
 {
 public:
+	NodeMetadataList(bool is_metadata_owner = true) :
+		m_is_metadata_owner(is_metadata_owner)
+	{}
+
 	~NodeMetadataList();
 
-	void serialize(std::ostream &os) const;
-	void deSerialize(std::istream &is, IGameDef *gamedef);
+	void serialize(std::ostream &os, u8 blockver, bool disk = true,
+		bool absolute_pos = false) const;
+	void deSerialize(std::istream &is, IItemDefManager *item_def_mgr,
+		bool absolute_pos = false);
 
 	// Add all keys in this list to the vector keys
 	std::vector<v3s16> getAllKeys();
@@ -94,9 +97,21 @@ public:
 	// Deletes all
 	void clear();
 
+	size_t size() const { return m_data.size(); }
+
+	NodeMetadataMap::const_iterator begin()
+	{
+		return m_data.begin();
+	}
+
+	NodeMetadataMap::const_iterator end()
+	{
+		return m_data.end();
+	}
+
 private:
-	std::map<v3s16, NodeMetadata *> m_data;
+	int countNonEmpty() const;
+
+	bool m_is_metadata_owner;
+	NodeMetadataMap m_data;
 };
-
-#endif
-

@@ -23,21 +23,167 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "log.h"
 
 #include "hex.h"
-#include "../porting.h"
+#include "porting.h"
+#include "translation.h"
 
+#include <algorithm>
 #include <sstream>
 #include <iomanip>
 #include <map>
 
-static bool parseHexColorString(const std::string &value, video::SColor &color);
+#ifndef _WIN32
+	#include <iconv.h>
+#else
+	#define _WIN32_WINNT 0x0501
+	#include <windows.h>
+#endif
+
+#if defined(_ICONV_H_) && (defined(__FreeBSD__) || defined(__NetBSD__) || \
+	defined(__OpenBSD__) || defined(__DragonFly__))
+	#define BSD_ICONV_USED
+#endif
+
+static bool parseHexColorString(const std::string &value, video::SColor &color,
+		unsigned char default_alpha = 0xff);
 static bool parseNamedColorString(const std::string &value, video::SColor &color);
 
+#ifndef _WIN32
+
+bool convert(const char *to, const char *from, char *outbuf,
+		size_t outbuf_size, char *inbuf, size_t inbuf_size)
+{
+	iconv_t cd = iconv_open(to, from);
+
+#ifdef BSD_ICONV_USED
+	const char *inbuf_ptr = inbuf;
+#else
+	char *inbuf_ptr = inbuf;
+#endif
+
+	char *outbuf_ptr = outbuf;
+
+	size_t *inbuf_left_ptr = &inbuf_size;
+	size_t *outbuf_left_ptr = &outbuf_size;
+
+	size_t old_size = inbuf_size;
+	while (inbuf_size > 0) {
+		iconv(cd, &inbuf_ptr, inbuf_left_ptr, &outbuf_ptr, outbuf_left_ptr);
+		if (inbuf_size == old_size) {
+			iconv_close(cd);
+			return false;
+		}
+		old_size = inbuf_size;
+	}
+
+	iconv_close(cd);
+	return true;
+}
+
+std::wstring utf8_to_wide(const std::string &input)
+{
+	size_t inbuf_size = input.length() + 1;
+	// maximum possible size, every character is sizeof(wchar_t) bytes
+	size_t outbuf_size = (input.length() + 1) * sizeof(wchar_t);
+
+	char *inbuf = new char[inbuf_size];
+	memcpy(inbuf, input.c_str(), inbuf_size);
+	char *outbuf = new char[outbuf_size];
+	memset(outbuf, 0, outbuf_size);
+
+	if (!convert("WCHAR_T", "UTF-8", outbuf, outbuf_size, inbuf, inbuf_size)) {
+		infostream << "Couldn't convert UTF-8 string 0x" << hex_encode(input)
+			<< " into wstring" << std::endl;
+		delete[] inbuf;
+		delete[] outbuf;
+		return L"<invalid UTF-8 string>";
+	}
+	std::wstring out((wchar_t *)outbuf);
+
+	delete[] inbuf;
+	delete[] outbuf;
+
+	return out;
+}
+
+#ifdef __ANDROID__
+// TODO: this is an ugly fix for wide_to_utf8 somehow not working on android
+std::string wide_to_utf8(const std::wstring &input)
+{
+	return wide_to_narrow(input);
+}
+#else
+std::string wide_to_utf8(const std::wstring &input)
+{
+	size_t inbuf_size = (input.length() + 1) * sizeof(wchar_t);
+	// maximum possible size: utf-8 encodes codepoints using 1 up to 6 bytes
+	size_t outbuf_size = (input.length() + 1) * 6;
+
+	char *inbuf = new char[inbuf_size];
+	memcpy(inbuf, input.c_str(), inbuf_size);
+	char *outbuf = new char[outbuf_size];
+	memset(outbuf, 0, outbuf_size);
+
+	if (!convert("UTF-8", "WCHAR_T", outbuf, outbuf_size, inbuf, inbuf_size)) {
+		infostream << "Couldn't convert wstring 0x" << hex_encode(inbuf, inbuf_size)
+			<< " into UTF-8 string" << std::endl;
+		delete[] inbuf;
+		delete[] outbuf;
+		return "<invalid wstring>";
+	}
+	std::string out(outbuf);
+
+	delete[] inbuf;
+	delete[] outbuf;
+
+	return out;
+}
+
+#endif
+#else // _WIN32
+
+std::wstring utf8_to_wide(const std::string &input)
+{
+	size_t outbuf_size = input.size() + 1;
+	wchar_t *outbuf = new wchar_t[outbuf_size];
+	memset(outbuf, 0, outbuf_size * sizeof(wchar_t));
+	MultiByteToWideChar(CP_UTF8, 0, input.c_str(), input.size(),
+		outbuf, outbuf_size);
+	std::wstring out(outbuf);
+	delete[] outbuf;
+	return out;
+}
+
+std::string wide_to_utf8(const std::wstring &input)
+{
+	size_t outbuf_size = (input.size() + 1) * 6;
+	char *outbuf = new char[outbuf_size];
+	memset(outbuf, 0, outbuf_size);
+	WideCharToMultiByte(CP_UTF8, 0, input.c_str(), input.size(),
+		outbuf, outbuf_size, NULL, NULL);
+	std::string out(outbuf);
+	delete[] outbuf;
+	return out;
+}
+
+#endif // _WIN32
+
+// You must free the returned string!
+// The returned string is allocated using new
+wchar_t *utf8_to_wide_c(const char *str)
+{
+	std::wstring ret = utf8_to_wide(std::string(str));
+	size_t len = ret.length();
+	wchar_t *ret_c = new wchar_t[len + 1];
+	memset(ret_c, 0, (len + 1) * sizeof(wchar_t));
+	memcpy(ret_c, ret.c_str(), len * sizeof(wchar_t));
+	return ret_c;
+}
 
 // You must free the returned string!
 // The returned string is allocated using new
 wchar_t *narrow_to_wide_c(const char *str)
 {
-	wchar_t* nstr = 0;
+	wchar_t *nstr = NULL;
 #if defined(_WIN32)
 	int nResult = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR) str, -1, 0, 0);
 	if (nResult == 0) {
@@ -48,7 +194,7 @@ wchar_t *narrow_to_wide_c(const char *str)
 	}
 #else
 	size_t len = strlen(str);
-	nstr = new wchar_t[len+1];
+	nstr = new wchar_t[len + 1];
 
 	std::wstring intermediate = narrow_to_wide(str);
 	memset(nstr, 0, (len + 1) * sizeof(wchar_t));
@@ -166,32 +312,32 @@ std::string wide_to_narrow(const std::wstring &wcs)
 	size_t len = wcstombs(*mbs, wcs.c_str(), mbl);
 	if (len == (size_t)(-1))
 		return "Character conversion failed!";
-	else
-		mbs[len] = 0;
+
+	mbs[len] = 0;
 	return *mbs;
 }
 
 #endif
 
-std::string urlencode(std::string str)
+std::string urlencode(const std::string &str)
 {
 	// Encodes non-unreserved URI characters by a percent sign
 	// followed by two hex digits. See RFC 3986, section 2.3.
 	static const char url_hex_chars[] = "0123456789ABCDEF";
 	std::ostringstream oss(std::ios::binary);
-	for (u32 i = 0; i < str.size(); i++) {
-		unsigned char c = str[i];
-		if (isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~')
+	for (unsigned char c : str) {
+		if (isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~') {
 			oss << c;
-		else
+		} else {
 			oss << "%"
 				<< url_hex_chars[(c & 0xf0) >> 4]
 				<< url_hex_chars[c & 0x0f];
+		}
 	}
 	return oss.str();
 }
 
-std::string urldecode(std::string str)
+std::string urldecode(const std::string &str)
 {
 	// Inverse of urlencode
 	std::ostringstream oss(std::ios::binary);
@@ -202,18 +348,20 @@ std::string urldecode(std::string str)
 				hex_digit_decode(str[i+2], lowvalue)) {
 			oss << (char) ((highvalue << 4) | lowvalue);
 			i += 2;
-		}
-		else
+		} else {
 			oss << str[i];
+		}
 	}
 	return oss.str();
 }
 
 u32 readFlagString(std::string str, const FlagDesc *flagdesc, u32 *flagmask)
 {
-	u32 result = 0, mask = 0;
+	u32 result = 0;
+	u32 mask = 0;
 	char *s = &str[0];
-	char *flagstr, *strpos = NULL;
+	char *flagstr;
+	char *strpos = NULL;
 
 	while ((flagstr = strtok_r(s, ",", &strpos))) {
 		s = NULL;
@@ -319,12 +467,13 @@ u64 read_seed(const char *str)
 	return num;
 }
 
-bool parseColorString(const std::string &value, video::SColor &color, bool quiet)
+bool parseColorString(const std::string &value, video::SColor &color, bool quiet,
+		unsigned char default_alpha)
 {
 	bool success;
 
 	if (value[0] == '#')
-		success = parseHexColorString(value, color);
+		success = parseHexColorString(value, color, default_alpha);
 	else
 		success = parseNamedColorString(value, color);
 
@@ -334,9 +483,10 @@ bool parseColorString(const std::string &value, video::SColor &color, bool quiet
 	return success;
 }
 
-static bool parseHexColorString(const std::string &value, video::SColor &color)
+static bool parseHexColorString(const std::string &value, video::SColor &color,
+		unsigned char default_alpha)
 {
-	unsigned char components[] = { 0x00, 0x00, 0x00, 0xff }; // R,G,B,A
+	unsigned char components[] = { 0x00, 0x00, 0x00, default_alpha }; // R,G,B,A
 
 	if (value[0] != '#')
 		return false;
@@ -417,6 +567,7 @@ ColorContainer::ColorContainer()
 	colors["darkgoldenrod"]          = 0xb8860b;
 	colors["darkgray"]               = 0xa9a9a9;
 	colors["darkgreen"]              = 0x006400;
+	colors["darkgrey"]               = 0xa9a9a9;
 	colors["darkkhaki"]              = 0xbdb76b;
 	colors["darkmagenta"]            = 0x8b008b;
 	colors["darkolivegreen"]         = 0x556b2f;
@@ -427,11 +578,13 @@ ColorContainer::ColorContainer()
 	colors["darkseagreen"]           = 0x8fbc8f;
 	colors["darkslateblue"]          = 0x483d8b;
 	colors["darkslategray"]          = 0x2f4f4f;
+	colors["darkslategrey"]          = 0x2f4f4f;
 	colors["darkturquoise"]          = 0x00ced1;
 	colors["darkviolet"]             = 0x9400d3;
 	colors["deeppink"]               = 0xff1493;
 	colors["deepskyblue"]            = 0x00bfff;
 	colors["dimgray"]                = 0x696969;
+	colors["dimgrey"]                = 0x696969;
 	colors["dodgerblue"]             = 0x1e90ff;
 	colors["firebrick"]              = 0xb22222;
 	colors["floralwhite"]            = 0xfffaf0;
@@ -444,10 +597,11 @@ ColorContainer::ColorContainer()
 	colors["gray"]                   = 0x808080;
 	colors["green"]                  = 0x008000;
 	colors["greenyellow"]            = 0xadff2f;
+	colors["grey"]                   = 0x808080;
 	colors["honeydew"]               = 0xf0fff0;
 	colors["hotpink"]                = 0xff69b4;
-	colors["indianred "]             = 0xcd5c5c;
-	colors["indigo "]                = 0x4b0082;
+	colors["indianred"]              = 0xcd5c5c;
+	colors["indigo"]                 = 0x4b0082;
 	colors["ivory"]                  = 0xfffff0;
 	colors["khaki"]                  = 0xf0e68c;
 	colors["lavender"]               = 0xe6e6fa;
@@ -460,11 +614,13 @@ ColorContainer::ColorContainer()
 	colors["lightgoldenrodyellow"]   = 0xfafad2;
 	colors["lightgray"]              = 0xd3d3d3;
 	colors["lightgreen"]             = 0x90ee90;
+	colors["lightgrey"]              = 0xd3d3d3;
 	colors["lightpink"]              = 0xffb6c1;
 	colors["lightsalmon"]            = 0xffa07a;
 	colors["lightseagreen"]          = 0x20b2aa;
 	colors["lightskyblue"]           = 0x87cefa;
 	colors["lightslategray"]         = 0x778899;
+	colors["lightslategrey"]         = 0x778899;
 	colors["lightsteelblue"]         = 0xb0c4de;
 	colors["lightyellow"]            = 0xffffe0;
 	colors["lime"]                   = 0x00ff00;
@@ -517,6 +673,7 @@ ColorContainer::ColorContainer()
 	colors["skyblue"]                = 0x87ceeb;
 	colors["slateblue"]              = 0x6a5acd;
 	colors["slategray"]              = 0x708090;
+	colors["slategrey"]              = 0x708090;
 	colors["snow"]                   = 0xfffafa;
 	colors["springgreen"]            = 0x00ff7f;
 	colors["steelblue"]              = 0x4682b4;
@@ -591,4 +748,227 @@ static bool parseNamedColorString(const std::string &value, video::SColor &color
 void str_replace(std::string &str, char from, char to)
 {
 	std::replace(str.begin(), str.end(), from, to);
+}
+
+/* Translated strings have the following format:
+ * \x1bT marks the beginning of a translated string
+ * \x1bE marks its end
+ *
+ * \x1bF marks the beginning of an argument, and \x1bE its end.
+ *
+ * Arguments are *not* translated, as they may contain escape codes.
+ * Thus, if you want a translated argument, it should be inside \x1bT/\x1bE tags as well.
+ *
+ * This representation is chosen so that clients ignoring escape codes will
+ * see untranslated strings.
+ *
+ * For instance, suppose we have a string such as "@1 Wool" with the argument "White"
+ * The string will be sent as "\x1bT\x1bF\x1bTWhite\x1bE\x1bE Wool\x1bE"
+ * To translate this string, we extract what is inside \x1bT/\x1bE tags.
+ * When we notice the \x1bF tag, we recursively extract what is there up to the \x1bE end tag,
+ * translating it as well.
+ * We get the argument "White", translated, and create a template string with "@1" instead of it.
+ * We finally get the template "@1 Wool" that was used in the beginning, which we translate
+ * before filling it again.
+ */
+
+void translate_all(const std::wstring &s, size_t &i, std::wstring &res);
+
+void translate_string(const std::wstring &s, const std::wstring &textdomain,
+		size_t &i, std::wstring &res) {
+	std::wostringstream output;
+	std::vector<std::wstring> args;
+	int arg_number = 1;
+	while (i < s.length()) {
+		// Not an escape sequence: just add the character.
+		if (s[i] != '\x1b') {
+			output.put(s[i]);
+			// The character is a literal '@'; add it twice
+			// so that it is not mistaken for an argument.
+			if (s[i] == L'@')
+				output.put(L'@');
+			++i;
+			continue;
+		}
+
+		// We have an escape sequence: locate it and its data
+		// It is either a single character, or it begins with '('
+		// and extends up to the following ')', with '\' as an escape character.
+		++i;
+		size_t start_index = i;
+		size_t length;
+		if (i == s.length()) {
+			length = 0;
+		} else if (s[i] == L'(') {
+			++i;
+			++start_index;
+			while (i < s.length() && s[i] != L')') {
+				if (s[i] == L'\\')
+					++i;
+				++i;
+			}
+			length = i - start_index;
+			++i;
+			if (i > s.length())
+				i = s.length();
+		} else {
+			++i;
+			length = 1;
+		}
+		std::wstring escape_sequence(s, start_index, length);
+
+		// The escape sequence is now reconstructed.
+		std::vector<std::wstring> parts = split(escape_sequence, L'@');
+		if (parts[0] == L"E") {
+			// "End of translation" escape sequence. We are done locating the string to translate.
+			break;
+		} else if (parts[0] == L"F") {
+			// "Start of argument" escape sequence.
+			// Recursively translate the argument, and add it to the argument list.
+			// Add an "@n" instead of the argument to the template to translate.
+			if (arg_number >= 10) {
+				errorstream << "Ignoring too many arguments to translation" << std::endl;
+				std::wstring arg;
+				translate_all(s, i, arg);
+				args.push_back(arg);
+				continue;
+			}
+			output.put(L'@');
+			output << arg_number;
+			++arg_number;
+			std::wstring arg;
+			translate_all(s, i, arg);
+			args.push_back(arg);
+		} else {
+			// This is an escape sequence *inside* the template string to translate itself.
+			// This should not happen, show an error message.
+			errorstream << "Ignoring escape sequence '" << wide_to_narrow(escape_sequence) << "' in translation" << std::endl;
+		}
+	}
+
+	// Translate the template.
+	std::wstring toutput = g_translations->getTranslation(textdomain, output.str());
+
+	// Put back the arguments in the translated template.
+	std::wostringstream result;
+	size_t j = 0;
+	while (j < toutput.length()) {
+		// Normal character, add it to output and continue.
+		if (toutput[j] != L'@' || j == toutput.length() - 1) {
+			result.put(toutput[j]);
+			++j;
+			continue;
+		}
+
+		++j;
+		// Literal escape for '@'.
+		if (toutput[j] == L'@') {
+			result.put(L'@');
+			++j;
+			continue;
+		}
+
+		// Here we have an argument; get its index and add the translated argument to the output.
+		int arg_index = toutput[j] - L'1';
+		++j;
+		if (0 <= arg_index && (size_t)arg_index < args.size()) {
+			result << args[arg_index];
+		} else {
+			// This is not allowed: show an error message
+			errorstream << "Ignoring out-of-bounds argument escape sequence in translation" << std::endl;
+		}
+	}
+	res = result.str();
+}
+
+void translate_all(const std::wstring &s, size_t &i, std::wstring &res) {
+	std::wostringstream output;
+	while (i < s.length()) {
+		// Not an escape sequence: just add the character.
+		if (s[i] != '\x1b') {
+			output.put(s[i]);
+			++i;
+			continue;
+		}
+
+		// We have an escape sequence: locate it and its data
+		// It is either a single character, or it begins with '('
+		// and extends up to the following ')', with '\' as an escape character.
+		size_t escape_start = i;
+		++i;
+		size_t start_index = i;
+		size_t length;
+		if (i == s.length()) {
+			length = 0;
+		} else if (s[i] == L'(') {
+			++i;
+			++start_index;
+			while (i < s.length() && s[i] != L')') {
+				if (s[i] == L'\\') {
+					++i;
+				}
+				++i;
+			}
+			length = i - start_index;
+			++i;
+			if (i > s.length())
+				i = s.length();
+		} else {
+			++i;
+			length = 1;
+		}
+		std::wstring escape_sequence(s, start_index, length);
+
+		// The escape sequence is now reconstructed.
+		std::vector<std::wstring> parts = split(escape_sequence, L'@');
+		if (parts[0] == L"E") {
+			// "End of argument" escape sequence. Exit.
+			break;
+		} else if (parts[0] == L"T") {
+			// Beginning of translated string.
+			std::wstring textdomain;
+			if (parts.size() > 1)
+				textdomain = parts[1];
+			std::wstring translated;
+			translate_string(s, textdomain, i, translated);
+			output << translated;
+		} else {
+			// Another escape sequence, such as colors. Preserve it.
+			output << std::wstring(s, escape_start, i - escape_start);
+		}
+	}
+
+	res = output.str();
+}
+
+std::wstring translate_string(const std::wstring &s) {
+	size_t i = 0;
+	std::wstring res;
+	translate_all(s, i, res);
+	return res;
+}
+
+/**
+ * Create a std::string from a irr::core:stringw.
+ */
+std::string strwtostr(const irr::core::stringw &str)
+{
+	std::string text = core::stringc(str.c_str()).c_str();
+	return text;
+}
+
+/**
+ * Create a irr::core:stringw from a std::string.
+ */
+irr::core::stringw strtostrw(const std::string &str)
+{
+	size_t size = str.size();
+	// s.size() doesn't include NULL terminator
+	wchar_t *text = new wchar_t[size + sizeof(wchar_t)];
+	const char *data = &str[0];
+
+	mbsrtowcs(text, &data, size, NULL);
+
+	text[size] = L'\0';
+	return text;
 }

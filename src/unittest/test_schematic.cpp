@@ -19,7 +19,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "test.h"
 
-#include "mg_schematic.h"
+#include "mapgen/mg_schematic.h"
 #include "gamedef.h"
 #include "nodedef.h"
 
@@ -30,9 +30,9 @@ public:
 
 	void runTests(IGameDef *gamedef);
 
-	void testMtsSerializeDeserialize(INodeDefManager *ndef);
-	void testLuaTableSerialize(INodeDefManager *ndef);
-	void testFileSerializeDeserialize(INodeDefManager *ndef);
+	void testMtsSerializeDeserialize(const NodeDefManager *ndef);
+	void testLuaTableSerialize(const NodeDefManager *ndef);
+	void testFileSerializeDeserialize(const NodeDefManager *ndef);
 
 	static const content_t test_schem1_data[7 * 6 * 4];
 	static const content_t test_schem2_data[3 * 3 * 3];
@@ -44,8 +44,8 @@ static TestSchematic g_test_instance;
 
 void TestSchematic::runTests(IGameDef *gamedef)
 {
-	IWritableNodeDefManager *ndef =
-		(IWritableNodeDefManager *)gamedef->getNodeDefManager();
+	NodeDefManager *ndef =
+		(NodeDefManager *)gamedef->getNodeDefManager();
 
 	ndef->setNodeRegistrationStatus(true);
 
@@ -58,7 +58,7 @@ void TestSchematic::runTests(IGameDef *gamedef)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void TestSchematic::testMtsSerializeDeserialize(INodeDefManager *ndef)
+void TestSchematic::testMtsSerializeDeserialize(const NodeDefManager *ndef)
 {
 	static const v3s16 size(7, 6, 4);
 	static const u32 volume = size.X * size.Y * size.Z;
@@ -67,10 +67,10 @@ void TestSchematic::testMtsSerializeDeserialize(INodeDefManager *ndef)
 		std::ios_base::in | std::ios_base::out);
 
 	std::vector<std::string> names;
-	names.push_back("foo");
-	names.push_back("bar");
-	names.push_back("baz");
-	names.push_back("qux");
+	names.emplace_back("foo");
+	names.emplace_back("bar");
+	names.emplace_back("baz");
+	names.emplace_back("qux");
 
 	Schematic schem, schem2;
 
@@ -99,12 +99,12 @@ void TestSchematic::testMtsSerializeDeserialize(INodeDefManager *ndef)
 	UASSERT(schem2.size == size);
 	for (size_t i = 0; i != volume; i++)
 		UASSERT(schem2.schemdata[i] == schem.schemdata[i]);
-	for (size_t y = 0; y != size.Y; y++)
+	for (s16 y = 0; y != size.Y; y++)
 		UASSERTEQ(u8, schem2.slice_probs[y], schem.slice_probs[y]);
 }
 
 
-void TestSchematic::testLuaTableSerialize(INodeDefManager *ndef)
+void TestSchematic::testLuaTableSerialize(const NodeDefManager *ndef)
 {
 	static const v3s16 size(3, 3, 3);
 	static const u32 volume = size.X * size.Y * size.Z;
@@ -121,9 +121,9 @@ void TestSchematic::testLuaTableSerialize(INodeDefManager *ndef)
 		schem.slice_probs[y] = MTSCHEM_PROB_ALWAYS;
 
 	std::vector<std::string> names;
-	names.push_back("air");
-	names.push_back("default:lava_source");
-	names.push_back("default:glass");
+	names.emplace_back("air");
+	names.emplace_back("default:lava_source");
+	names.emplace_back("default:glass");
 
 	std::ostringstream ss(std::ios_base::binary);
 
@@ -132,7 +132,7 @@ void TestSchematic::testLuaTableSerialize(INodeDefManager *ndef)
 }
 
 
-void TestSchematic::testFileSerializeDeserialize(INodeDefManager *ndef)
+void TestSchematic::testFileSerializeDeserialize(const NodeDefManager *ndef)
 {
 	static const v3s16 size(3, 3, 3);
 	static const u32 volume = size.X * size.Y * size.Z;

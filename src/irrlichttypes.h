@@ -17,8 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef IRRLICHTTYPES_HEADER
-#define IRRLICHTTYPES_HEADER
+#pragma once
 
 /* Ensure that <stdint.h> is included before <irrTypes.h>, unless building on
  * MSVC, to address an irrlicht issue: https://sourceforge.net/p/irrlicht/bugs/433/
@@ -28,12 +27,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
  *       regardless of the compiler.
  */
 #ifndef _MSC_VER
-#	include <stdint.h>
+#	include <cstdint>
 #endif
 
 #include <irrTypes.h>
 
 using namespace irr;
+
+namespace irr {
 
 // Irrlicht 1.8+ defines 64bit unsigned symbol in irrTypes.h
 #if (IRRLICHT_VERSION_MAJOR == 1 && IRRLICHT_VERSION_MINOR < 8)
@@ -48,4 +49,32 @@ using namespace irr;
 #endif
 #endif
 
+#if (IRRLICHT_VERSION_MAJOR == 1 && IRRLICHT_VERSION_MINOR >= 9)
+namespace core {
+	template <typename T>
+	inline T roundingError();
+
+	template <>
+	inline s16 roundingError()
+	{
+		return 0;
+	}
+}
 #endif
+
+}
+
+#define S8_MIN  (-0x7F - 1)
+#define S16_MIN (-0x7FFF - 1)
+#define S32_MIN (-0x7FFFFFFF - 1)
+#define S64_MIN (-0x7FFFFFFFFFFFFFFF - 1)
+
+#define S8_MAX  0x7F
+#define S16_MAX 0x7FFF
+#define S32_MAX 0x7FFFFFFF
+#define S64_MAX 0x7FFFFFFFFFFFFFFF
+
+#define U8_MAX  0xFF
+#define U16_MAX 0xFFFF
+#define U32_MAX 0xFFFFFFFF
+#define U64_MAX 0xFFFFFFFFFFFFFFFF

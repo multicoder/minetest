@@ -104,7 +104,7 @@ function core.serialize(x)
 		local i = local_index
 		local_index = local_index + 1
 		var = "_["..i.."]"
-		table.insert(local_defs, var.." = "..val)
+		local_defs[#local_defs + 1] = var.." = "..val
 		dumped[x] = var
 		return var
 	end
@@ -135,16 +135,15 @@ function core.serialize(x)
 			local np = nest_points[x]
 			for i, v in ipairs(x) do
 				if not np or not np[i] then
-					table.insert(vals, dump_or_ref_val(v))
+					vals[#vals + 1] = dump_or_ref_val(v)
 				end
 				idx_dumped[i] = true
 			end
 			for k, v in pairs(x) do
 				if (not np or not np[k]) and
 						not idx_dumped[k] then
-					table.insert(vals,
-						"["..dump_or_ref_val(k).."] = "
-						..dump_or_ref_val(v))
+					vals[#vals + 1] = "["..dump_or_ref_val(k).."] = "
+						..dump_or_ref_val(v)
 				end
 			end
 			return "{"..table.concat(vals, ", ").."}"
@@ -156,9 +155,9 @@ function core.serialize(x)
 	local function dump_nest_points()
 		for parent, vals in pairs(nest_points) do
 			for k, v in pairs(vals) do
-				table.insert(local_defs, dump_or_ref_val(parent)
+				local_defs[#local_defs + 1] = dump_or_ref_val(parent)
 					.."["..dump_or_ref_val(k).."] = "
-					..dump_or_ref_val(v))
+					..dump_or_ref_val(v)
 			end
 		end
 	end
@@ -187,6 +186,10 @@ local safe_env = {
 }
 
 function core.deserialize(str, safe)
+	if type(str) ~= "string" then
+		return nil, "Cannot deserialize type '"..type(str)
+			.."'. Argument must be a string."
+	end
 	if str:byte(1) == 0x1B then
 		return nil, "Bytecode prohibited"
 	end
@@ -215,4 +218,3 @@ test_in = {escape_chars="\n\r\t\v\\\"\'", non_european="θשׁ٩∂"}
 test_out = core.deserialize(core.serialize(test_in))
 assert(test_in.escape_chars == test_out.escape_chars)
 assert(test_in.non_european == test_out.non_european)
-

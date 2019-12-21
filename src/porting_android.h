@@ -16,8 +16,8 @@ You should have received a copy of the GNU Lesser General Public License along
 with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
-#ifndef __PORTING_ANDROID_H__
-#define __PORTING_ANDROID_H__
+
+#pragma once
 
 #ifndef __ANDROID__
 #error this include has to be included on android port only!
@@ -43,10 +43,10 @@ void initAndroid();
 void cleanupAndroid();
 
 /**
- * set storage dir on external sdcard#
- * @param lJNIEnv environment from android
+ * Initializes path_* variables for Android
+ * @param env Android JNI environment
  */
-void setExternalStorageDir(JNIEnv* lJNIEnv);
+void initializePathsAndroid();
 
 /**
  * use java function to copy media from assets to external storage
@@ -76,6 +76,9 @@ int getInputDialogState();
  */
 std::string getInputDialogValue();
 
-}
-
+#ifndef SERVER
+float getDisplayDensity();
+v2u32 getDisplaySize();
 #endif
+
+}

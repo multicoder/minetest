@@ -17,35 +17,31 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef PLAYER_HEADER
-#define PLAYER_HEADER
+#pragma once
 
 #include "irrlichttypes_bloated.h"
 #include "inventory.h"
-#include "constants.h" // BS
-#include "jthread/jmutex.h"
+#include "constants.h"
+#include "network/networkprotocol.h"
+#include "util/basic_macros.h"
 #include <list>
+#include <mutex>
 
 #define PLAYERNAME_SIZE 20
 
 #define PLAYERNAME_ALLOWED_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+#define PLAYERNAME_ALLOWED_CHARS_USER_EXPL "'a' to 'z', 'A' to 'Z', '0' to '9', '-', '_'"
+
+struct PlayerFovSpec
+{
+	f32 fov;
+	bool is_multiplier;
+};
 
 struct PlayerControl
 {
-	PlayerControl()
-	{
-		up = false;
-		down = false;
-		left = false;
-		right = false;
-		jump = false;
-		aux1 = false;
-		sneak = false;
-		LMB = false;
-		RMB = false;
-		pitch = 0;
-		yaw = 0;
-	}
+	PlayerControl() = default;
+
 	PlayerControl(
 		bool a_up,
 		bool a_down,
@@ -54,10 +50,13 @@ struct PlayerControl
 		bool a_jump,
 		bool a_aux1,
 		bool a_sneak,
+		bool a_zoom,
 		bool a_LMB,
 		bool a_RMB,
 		float a_pitch,
-		float a_yaw
+		float a_yaw,
+		float a_sidew_move_joystick_axis,
+		float a_forw_move_joystick_axis
 	)
 	{
 		up = a_up;
@@ -67,40 +66,61 @@ struct PlayerControl
 		jump = a_jump;
 		aux1 = a_aux1;
 		sneak = a_sneak;
+		zoom = a_zoom;
 		LMB = a_LMB;
 		RMB = a_RMB;
 		pitch = a_pitch;
 		yaw = a_yaw;
+		sidew_move_joystick_axis = a_sidew_move_joystick_axis;
+		forw_move_joystick_axis = a_forw_move_joystick_axis;
 	}
-	bool up;
-	bool down;
-	bool left;
-	bool right;
-	bool jump;
-	bool aux1;
-	bool sneak;
-	bool LMB;
-	bool RMB;
-	float pitch;
-	float yaw;
+	bool up = false;
+	bool down = false;
+	bool left = false;
+	bool right = false;
+	bool jump = false;
+	bool aux1 = false;
+	bool sneak = false;
+	bool zoom = false;
+	bool LMB = false;
+	bool RMB = false;
+	float pitch = 0.0f;
+	float yaw = 0.0f;
+	float sidew_move_joystick_axis = 0.0f;
+	float forw_move_joystick_axis = 0.0f;
+};
+
+struct PlayerSettings
+{
+	bool free_move = false;
+	bool pitch_move = false;
+	bool fast_move = false;
+	bool continuous_forward = false;
+	bool always_fly_fast = false;
+	bool aux1_descends = false;
+	bool noclip = false;
+	bool autojump = false;
+
+	const std::string setting_names[8] = {
+		"free_move", "pitch_move", "fast_move", "continuous_forward", "always_fly_fast",
+		"aux1_descends", "noclip", "autojump"
+	};
+	void readGlobalSettings();
 };
 
 class Map;
-class IGameDef;
 struct CollisionInfo;
-class PlayerSAO;
 struct HudElement;
 class Environment;
 
-// IMPORTANT:
-// Do *not* perform an assignment or copy operation on a Player or
-// RemotePlayer object!  This will copy the lock held for HUD synchronization
 class Player
 {
 public:
 
-	Player(IGameDef *gamedef, const char *name);
+	Player(const char *name, IItemDefManager *idef);
 	virtual ~Player() = 0;
+
+	DISABLE_CLASS_COPY(Player);
 
 	virtual void move(f32 dtime, Environment *env, f32 pos_max_d)
 	{}
@@ -108,105 +128,20 @@ public:
 			std::vector<CollisionInfo> *collision_info)
 	{}
 
-	v3f getSpeed()
+	const v3f &getSpeed() const
 	{
 		return m_speed;
 	}
 
-	void setSpeed(v3f speed)
+	void setSpeed(const v3f &speed)
 	{
 		m_speed = speed;
 	}
 
-	void accelerateHorizontal(v3f target_speed, f32 max_increase);
-	void accelerateVertical(v3f target_speed, f32 max_increase);
+	const char *getName() const { return m_name; }
 
-	v3f getPosition()
+	u32 getFreeHudID()
 	{
-		return m_position;
-	}
-
-	v3s16 getLightPosition() const;
-
-	v3f getEyeOffset()
-	{
-		// This is at the height of the eyes of the current figure
-		// return v3f(0, BS*1.5, 0);
-		// This is more like in minecraft
-		if(camera_barely_in_ceiling)
-			return v3f(0,BS*1.5,0);
-		else
-			return v3f(0,BS*1.625,0);
-	}
-
-	v3f getEyePosition()
-	{
-		return m_position + getEyeOffset();
-	}
-
-	virtual void setPosition(const v3f &position)
-	{
-		if (position != m_position)
-			m_dirty = true;
-		m_position = position;
-	}
-
-	void setPitch(f32 pitch)
-	{
-		if (pitch != m_pitch)
-			m_dirty = true;
-		m_pitch = pitch;
-	}
-
-	virtual void setYaw(f32 yaw)
-	{
-		if (yaw != m_yaw)
-			m_dirty = true;
-		m_yaw = yaw;
-	}
-
-	f32 getPitch()
-	{
-		return m_pitch;
-	}
-
-	f32 getYaw()
-	{
-		return m_yaw;
-	}
-
-	u16 getBreath()
-	{
-		return m_breath;
-	}
-
-	virtual void setBreath(u16 breath)
-	{
-		if (breath != m_breath)
-			m_dirty = true;
-		m_breath = breath;
-	}
-
-	f32 getRadPitch()
-	{
-		return -1.0 * m_pitch * core::DEGTORAD;
-	}
-
-	f32 getRadYaw()
-	{
-		return (m_yaw + 90.) * core::DEGTORAD;
-	}
-
-	const char * getName() const
-	{
-		return m_name;
-	}
-
-	core::aabbox3d<f32> getCollisionbox() {
-		return m_collisionbox;
-	}
-
-	u32 getFreeHudID() {
 		size_t size = hud.size();
 		for (size_t i = 0; i != size; i++) {
 			if (!hud[i])
@@ -215,46 +150,8 @@ public:
 		return size;
 	}
 
-	virtual bool isLocal() const
-	{ return false; }
-	virtual PlayerSAO *getPlayerSAO()
-	{ return NULL; }
-	virtual void setPlayerSAO(PlayerSAO *sao)
-	{ FATAL_ERROR("FIXME"); }
-
-	/*
-		serialize() writes a bunch of text that can contain
-		any characters except a '\0', and such an ending that
-		deSerialize stops reading exactly at the right point.
-	*/
-	void serialize(std::ostream &os);
-	void deSerialize(std::istream &is, std::string playername);
-
-	bool checkModified() const
-	{
-		return m_dirty || inventory.checkModified();
-	}
-
-	void setModified(const bool x)
-	{
-		m_dirty = x;
-		if (x == false)
-			inventory.setModified(x);
-	}
-
-	// Use a function, if isDead can be defined by other conditions
-	bool isDead() { return hp == 0; }
-
-	bool touching_ground;
-	// This oscillates so that the player jumps a bit above the surface
-	bool in_liquid;
-	// This is more stable and defines the maximum speed of the player
-	bool in_liquid_stable;
-	// Gets the viscosity of water to calculate friction
-	u8 liquid_viscosity;
-	bool is_climbing;
-	bool swimming_vertical;
-	bool camera_barely_in_ceiling;
+	v3f eye_offset_first;
+	v3f eye_offset_third;
 
 	Inventory inventory;
 
@@ -271,88 +168,53 @@ public:
 	f32 movement_liquid_sink;
 	f32 movement_gravity;
 
-	float physics_override_speed;
-	float physics_override_jump;
-	float physics_override_gravity;
-	bool physics_override_sneak;
-	bool physics_override_sneak_glitch;
-
 	v2s32 local_animations[4];
 	float local_animation_speed;
 
-	u16 hp;
-
-	float hurt_tilt_timer;
-	float hurt_tilt_strength;
-
-	u16 peer_id;
-
 	std::string inventory_formspec;
+	std::string formspec_prepend;
 
 	PlayerControl control;
-	PlayerControl getPlayerControl()
+	const PlayerControl& getPlayerControl() { return control; }
+	PlayerSettings &getPlayerSettings() { return m_player_settings; }
+	static void settingsChangedCallback(const std::string &name, void *data);
+
+	// Returns non-empty `selected` ItemStack. `hand` is a fallback, if specified
+	ItemStack &getWieldedItem(ItemStack *selected, ItemStack *hand) const;
+	void setWieldIndex(u16 index);
+	u16 getWieldIndex() const { return m_wield_index; }
+
+	void setFov(const PlayerFovSpec &spec)
 	{
-		return control;
+		m_fov_spec = spec;
 	}
 
-	u32 keyPressed;
+	const PlayerFovSpec &getFov() const
+	{
+		return m_fov_spec;
+	}
 
+	u32 keyPressed = 0;
 
 	HudElement* getHud(u32 id);
 	u32         addHud(HudElement* hud);
 	HudElement* removeHud(u32 id);
 	void        clearHud();
-	u32         maxHudId() {
-		return hud.size();
-	}
 
 	u32 hud_flags;
 	s32 hud_hotbar_itemcount;
+
 protected:
-	IGameDef *m_gamedef;
-
 	char m_name[PLAYERNAME_SIZE];
-	u16 m_breath;
-	f32 m_pitch;
-	f32 m_yaw;
 	v3f m_speed;
-	v3f m_position;
-	core::aabbox3d<f32> m_collisionbox;
-
-	bool m_dirty;
+	u16 m_wield_index = 0;
+	PlayerFovSpec m_fov_spec = { 0.0f, false };
 
 	std::vector<HudElement *> hud;
 private:
 	// Protect some critical areas
 	// hud for example can be modified by EmergeThread
 	// and ServerThread
-	JMutex m_mutex;
+	std::mutex m_mutex;
+	PlayerSettings m_player_settings;
 };
-
-
-/*
-	Player on the server
-*/
-class RemotePlayer : public Player
-{
-public:
-	RemotePlayer(IGameDef *gamedef, const char *name):
-		Player(gamedef, name),
-		m_sao(NULL)
-	{}
-	virtual ~RemotePlayer() {}
-
-	void save(std::string savedir);
-
-	PlayerSAO *getPlayerSAO()
-	{ return m_sao; }
-	void setPlayerSAO(PlayerSAO *sao)
-	{ m_sao = sao; }
-	void setPosition(const v3f &position);
-
-private:
-	PlayerSAO *m_sao;
-};
-
-#endif
-

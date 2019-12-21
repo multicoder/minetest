@@ -19,6 +19,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "staticobject.h"
 #include "util/serialize.h"
+#include "content_sao.h"
+
+StaticObject::StaticObject(const ServerActiveObject *s_obj, const v3f &pos_):
+	type(s_obj->getType()),
+	pos(pos_)
+{
+	s_obj->getStaticData(&data);
+}
 
 void StaticObject::serialize(std::ostream &os)
 {
@@ -44,25 +52,40 @@ void StaticObjectList::serialize(std::ostream &os)
 	// version
 	u8 version = 0;
 	writeU8(os, version);
+
 	// count
-	u16 count = m_stored.size() + m_active.size();
+	size_t count = m_stored.size() + m_active.size();
+	// Make sure it fits into u16, else it would get truncated and cause e.g.
+	// issue #2610 (Invalid block data in database: unsupported NameIdMapping version).
+	if (count > U16_MAX) {
+		errorstream << "StaticObjectList::serialize(): "
+			<< "too many objects (" << count << ") in list, "
+			<< "not writing them to disk." << std::endl;
+		writeU16(os, 0);  // count = 0
+		return;
+	}
 	writeU16(os, count);
-	for(std::vector<StaticObject>::iterator
-			i = m_stored.begin();
-			i != m_stored.end(); ++i) {
-		StaticObject &s_obj = *i;
+
+	for (StaticObject &s_obj : m_stored) {
 		s_obj.serialize(os);
 	}
-	for(std::map<u16, StaticObject>::iterator
-			i = m_active.begin();
-			i != m_active.end(); ++i)
-	{
-		StaticObject s_obj = i->second;
+
+	for (auto &i : m_active) {
+		StaticObject s_obj = i.second;
 		s_obj.serialize(os);
 	}
 }
 void StaticObjectList::deSerialize(std::istream &is)
 {
+	if (m_active.size()) {
+		errorstream << "StaticObjectList::deSerialize(): "
+			<< "deserializing objects while " << m_active.size()
+			<< " active objects already exist (not cleared). "
+			<< m_stored.size() << " stored objects _were_ cleared"
+			<< std::endl;
+	}
+	m_stored.clear();
+
 	// version
 	u8 version = readU8(is);
 	// count

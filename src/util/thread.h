@@ -17,55 +17,46 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef UTIL_THREAD_HEADER
-#define UTIL_THREAD_HEADER
+#pragma once
 
-#include "../irrlichttypes.h"
-#include "../jthread/jthread.h"
-#include "../jthread/jmutex.h"
-#include "../jthread/jmutexautolock.h"
+#include "irrlichttypes.h"
+#include "threading/thread.h"
+#include "threading/mutex_auto_lock.h"
 #include "porting.h"
+#include "log.h"
+#include "container.h"
 
 template<typename T>
 class MutexedVariable
 {
 public:
-	MutexedVariable(T value):
+	MutexedVariable(const T &value):
 		m_value(value)
-	{
-	}
+	{}
 
 	T get()
 	{
-		JMutexAutoLock lock(m_mutex);
+		MutexAutoLock lock(m_mutex);
 		return m_value;
 	}
 
-	void set(T value)
+	void set(const T &value)
 	{
-		JMutexAutoLock lock(m_mutex);
+		MutexAutoLock lock(m_mutex);
 		m_value = value;
 	}
-	
-	// You'll want to grab this in a SharedPtr
-	JMutexAutoLock * getLock()
-	{
-		return new JMutexAutoLock(m_mutex);
-	}
-	
+
 	// You pretty surely want to grab the lock when accessing this
 	T m_value;
-
 private:
-	JMutex m_mutex;
+	std::mutex m_mutex;
 };
 
 /*
 	A single worker thread - multiple client threads queue framework.
 */
 template<typename Key, typename T, typename Caller, typename CallerData>
-class GetResult
-{
+class GetResult {
 public:
 	Key key;
 	T item;
@@ -73,34 +64,27 @@ public:
 };
 
 template<typename Key, typename T, typename Caller, typename CallerData>
-class ResultQueue: public MutexedQueue< GetResult<Key, T, Caller, CallerData> >
-{
+class ResultQueue : public MutexedQueue<GetResult<Key, T, Caller, CallerData> > {
 };
 
 template<typename Caller, typename Data, typename Key, typename T>
-class CallerInfo
-{
+class CallerInfo {
 public:
 	Caller caller;
 	Data data;
-	ResultQueue< Key, T, Caller, Data>* dest;
+	ResultQueue<Key, T, Caller, Data> *dest;
 };
 
 template<typename Key, typename T, typename Caller, typename CallerData>
-class GetRequest
-{
+class GetRequest {
 public:
-	GetRequest()
+	GetRequest() = default;
+	~GetRequest() = default;
+
+	GetRequest(const Key &a_key): key(a_key)
 	{
 	}
-	GetRequest(Key a_key)
-	{
-		key = a_key;
-	}
-	~GetRequest()
-	{
-	}
-	
+
 	Key key;
 	std::list<CallerInfo<Caller, CallerData, Key, T> > callers;
 };
@@ -113,49 +97,44 @@ public:
  * @param CallerData data passed back to caller
  */
 template<typename Key, typename T, typename Caller, typename CallerData>
-class RequestQueue
-{
+class RequestQueue {
 public:
 	bool empty()
 	{
 		return m_queue.empty();
 	}
 
-	void add(Key key, Caller caller, CallerData callerdata,
-			ResultQueue<Key, T, Caller, CallerData> *dest)
+	void add(const Key &key, Caller caller, CallerData callerdata,
+		ResultQueue<Key, T, Caller, CallerData> *dest)
 	{
+		typename std::deque<GetRequest<Key, T, Caller, CallerData> >::iterator i;
+		typename std::list<CallerInfo<Caller, CallerData, Key, T> >::iterator j;
+
 		{
-			JMutexAutoLock lock(m_queue.getMutex());
+			MutexAutoLock lock(m_queue.getMutex());
 
 			/*
 				If the caller is already on the list, only update CallerData
 			*/
-			for(typename std::deque< GetRequest<Key, T, Caller, CallerData> >::iterator
-					i = m_queue.getQueue().begin();
-					i != m_queue.getQueue().end(); ++i)
-			{
+			for (i = m_queue.getQueue().begin(); i != m_queue.getQueue().end(); ++i) {
 				GetRequest<Key, T, Caller, CallerData> &request = *i;
+				if (request.key != key)
+					continue;
 
-				if(request.key == key)
-				{
-					for(typename std::list< CallerInfo<Caller, CallerData, Key, T> >::iterator
-							i = request.callers.begin();
-							i != request.callers.end(); ++i)
-					{
-						CallerInfo<Caller, CallerData, Key, T> &ca = *i;
-						if(ca.caller == caller)
-						{
-							ca.data = callerdata;
-							return;
-						}
+				for (j = request.callers.begin(); j != request.callers.end(); ++j) {
+					CallerInfo<Caller, CallerData, Key, T> &ca = *j;
+					if (ca.caller == caller) {
+						ca.data = callerdata;
+						return;
 					}
-					CallerInfo<Caller, CallerData, Key, T> ca;
-					ca.caller = caller;
-					ca.data = callerdata;
-					ca.dest = dest;
-					request.callers.push_back(ca);
-					return;
 				}
+
+				CallerInfo<Caller, CallerData, Key, T> ca;
+				ca.caller = caller;
+				ca.data = callerdata;
+				ca.dest = dest;
+				request.callers.push_back(ca);
+				return;
 			}
 		}
 
@@ -170,7 +149,7 @@ public:
 		ca.data = callerdata;
 		ca.dest = dest;
 		request.callers.push_back(ca);
-		
+
 		m_queue.push_back(request);
 	}
 
@@ -184,13 +163,11 @@ public:
 		return m_queue.pop_frontNoEx();
 	}
 
-	void pushResult(GetRequest<Key, T, Caller, CallerData> req,
-					T res) {
-
-		for(typename std::list< CallerInfo<Caller, CallerData, Key, T> >::iterator
+	void pushResult(GetRequest<Key, T, Caller, CallerData> req, T res)
+	{
+		for (typename std::list<CallerInfo<Caller, CallerData, Key, T> >::iterator
 				i = req.callers.begin();
-				i != req.callers.end(); ++i)
-		{
+				i != req.callers.end(); ++i) {
 			CallerInfo<Caller, CallerData, Key, T> &ca = *i;
 
 			GetResult<Key,T,Caller,CallerData> result;
@@ -205,8 +182,47 @@ public:
 	}
 
 private:
-	MutexedQueue< GetRequest<Key, T, Caller, CallerData> > m_queue;
+	MutexedQueue<GetRequest<Key, T, Caller, CallerData> > m_queue;
 };
 
-#endif
+class UpdateThread : public Thread
+{
+public:
+	UpdateThread(const std::string &name) : Thread(name + "Update") {}
+	~UpdateThread() = default;
 
+	void deferUpdate() { m_update_sem.post(); }
+
+	void stop()
+	{
+		Thread::stop();
+
+		// give us a nudge
+		m_update_sem.post();
+	}
+
+	void *run()
+	{
+		BEGIN_DEBUG_EXCEPTION_HANDLER
+
+		while (!stopRequested()) {
+			m_update_sem.wait();
+			// Set semaphore to 0
+			while (m_update_sem.wait(0));
+
+			if (stopRequested()) break;
+
+			doUpdate();
+		}
+
+		END_DEBUG_EXCEPTION_HANDLER
+
+		return NULL;
+	}
+
+protected:
+	virtual void doUpdate() = 0;
+
+private:
+	Semaphore m_update_sem;
+};

@@ -3,9 +3,8 @@
 --
 -- Default material types
 --
-function digprop_err()
-	core.log("info", debug.traceback())
-	core.log("info", "WARNING: The core.digprop_* functions are obsolete and need to be replaced by item groups.")
+local function digprop_err()
+	core.log("deprecated", "The core.digprop_* functions are obsolete and need to be replaced by item groups.")
 end
 
 core.digprop_constanttime = digprop_err
@@ -16,12 +15,12 @@ core.digprop_woodlike = digprop_err
 core.digprop_leaveslike = digprop_err
 core.digprop_glasslike = digprop_err
 
-core.node_metadata_inventory_move_allow_all = function()
-	core.log("info", "WARNING: core.node_metadata_inventory_move_allow_all is obsolete and does nothing.")
+function core.node_metadata_inventory_move_allow_all()
+	core.log("deprecated", "core.node_metadata_inventory_move_allow_all is obsolete and does nothing.")
 end
 
-core.add_to_creative_inventory = function(itemstring)
-	core.log('info', "WARNING: core.add_to_creative_inventory: This function is deprecated and does nothing.")
+function core.add_to_creative_inventory(itemstring)
+	core.log("deprecated", "core.add_to_creative_inventory is obsolete and does nothing.")
 end
 
 --
@@ -32,7 +31,7 @@ local envref_deprecation_message_printed = false
 setmetatable(core.env, {
 	__index = function(table, key)
 		if not envref_deprecation_message_printed then
-			core.log("info", "WARNING: core.env:[...] is deprecated and should be replaced with core.[...]")
+			core.log("deprecated", "core.env:[...] is deprecated and should be replaced with core.[...]")
 			envref_deprecation_message_printed = true
 		end
 		local func = core[key]
@@ -51,3 +50,23 @@ function core.rollback_get_last_node_actor(pos, range, seconds)
 	return core.rollback_get_node_actions(pos, range, seconds, 1)[1]
 end
 
+--
+-- core.setting_*
+--
+
+local settings = core.settings
+
+local function setting_proxy(name)
+	return function(...)
+		core.log("deprecated", "WARNING: minetest.setting_* "..
+			"functions are deprecated.  "..
+			"Use methods on the minetest.settings object.")
+		return settings[name](settings, ...)
+	end
+end
+
+core.setting_set = setting_proxy("set")
+core.setting_get = setting_proxy("get")
+core.setting_setbool = setting_proxy("set_bool")
+core.setting_getbool = setting_proxy("get_bool")
+core.setting_save = setting_proxy("write")

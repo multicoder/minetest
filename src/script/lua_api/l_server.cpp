@@ -24,13 +24,18 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "cpp_api/s_base.h"
 #include "server.h"
 #include "environment.h"
-#include "player.h"
+#include "remoteplayer.h"
 #include "log.h"
+#include <algorithm>
 
 // request_shutdown()
 int ModApiServer::l_request_shutdown(lua_State *L)
 {
-	getServer(L)->requestShutdown();
+	NO_MAP_LOCK_REQUIRED;
+	const char *msg = lua_tolstring(L, 1, NULL);
+	bool reconnect = readParam<bool>(L, 2);
+	float seconds_before_shutdown = lua_tonumber(L, 3);
+	getServer(L)->requestShutdown(msg ? msg : "", reconnect, seconds_before_shutdown);
 	return 0;
 }
 
@@ -42,6 +47,25 @@ int ModApiServer::l_get_server_status(lua_State *L)
 	return 1;
 }
 
+// get_server_uptime()
+int ModApiServer::l_get_server_uptime(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	lua_pushnumber(L, getServer(L)->getUptime());
+	return 1;
+}
+
+
+// print(text)
+int ModApiServer::l_print(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	std::string text;
+	text = luaL_checkstring(L, 1);
+	getServer(L)->printToConsoleOnly(text);
+	return 0;
+}
+
 // chat_send_all(text)
 int ModApiServer::l_chat_send_all(lua_State *L)
 {
@@ -50,7 +74,7 @@ int ModApiServer::l_chat_send_all(lua_State *L)
 	// Get server from registry
 	Server *server = getServer(L);
 	// Send
-	server->notifyPlayers(narrow_to_wide(text));
+	server->notifyPlayers(utf8_to_wide(text));
 	return 0;
 }
 
@@ -64,7 +88,7 @@ int ModApiServer::l_chat_send_player(lua_State *L)
 	// Get server from registry
 	Server *server = getServer(L);
 	// Send
-	server->notifyPlayer(name, narrow_to_wide(text));
+	server->notifyPlayer(name, utf8_to_wide(text));
 	return 0;
 }
 
@@ -79,10 +103,9 @@ int ModApiServer::l_get_player_privs(lua_State *L)
 	lua_newtable(L);
 	int table = lua_gettop(L);
 	std::set<std::string> privs_s = server->getPlayerEffectivePrivs(name);
-	for(std::set<std::string>::const_iterator
-			i = privs_s.begin(); i != privs_s.end(); i++){
+	for (const std::string &privs_ : privs_s) {
 		lua_pushboolean(L, true);
-		lua_setfield(L, table, i->c_str());
+		lua_setfield(L, table, privs_.c_str());
 	}
 	lua_pushvalue(L, table);
 	return 1;
@@ -93,7 +116,7 @@ int ModApiServer::l_get_player_ip(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
 	const char * name = luaL_checkstring(L, 1);
-	Player *player = getEnv(L)->getPlayer(name);
+	RemotePlayer *player = dynamic_cast<ServerEnvironment *>(getEnv(L))->getPlayer(name);
 	if(player == NULL)
 	{
 		lua_pushnil(L); // no such player
@@ -101,28 +124,25 @@ int ModApiServer::l_get_player_ip(lua_State *L)
 	}
 	try
 	{
-		Address addr = getServer(L)->getPeerAddress(player->peer_id);
+		Address addr = getServer(L)->getPeerAddress(player->getPeerId());
 		std::string ip_str = addr.serializeString();
 		lua_pushstring(L, ip_str.c_str());
 		return 1;
-	}
-	catch(con::PeerNotFoundException) // unlikely
-	{
-		dstream << __FUNCTION_NAME << ": peer was not found" << std::endl;
+	} catch (const con::PeerNotFoundException &) {
+		dstream << FUNCTION_NAME << ": peer was not found" << std::endl;
 		lua_pushnil(L); // error
 		return 1;
 	}
 }
 
-// get_player_information()
+// get_player_information(name)
 int ModApiServer::l_get_player_information(lua_State *L)
 {
 
 	NO_MAP_LOCK_REQUIRED;
 	const char * name = luaL_checkstring(L, 1);
-	Player *player = getEnv(L)->getPlayer(name);
-	if(player == NULL)
-	{
+	RemotePlayer *player = dynamic_cast<ServerEnvironment *>(getEnv(L))->getPlayer(name);
+	if (player == NULL) {
 		lua_pushnil(L); // no such player
 		return 1;
 	}
@@ -130,11 +150,9 @@ int ModApiServer::l_get_player_information(lua_State *L)
 	Address addr;
 	try
 	{
-		addr = getServer(L)->getPeerAddress(player->peer_id);
-	}
-	catch(con::PeerNotFoundException) // unlikely
-	{
-		dstream << __FUNCTION_NAME << ": peer was not found" << std::endl;
+		addr = getServer(L)->getPeerAddress(player->getPeerId());
+	} catch(const con::PeerNotFoundException &) {
+		dstream << FUNCTION_NAME << ": peer was not found" << std::endl;
 		lua_pushnil(L); // error
 		return 1;
 	}
@@ -148,21 +166,23 @@ int ModApiServer::l_get_player_information(lua_State *L)
 
 #define ERET(code)                                                             \
 	if (!(code)) {                                                             \
-		dstream << __FUNCTION_NAME << ": peer was not found" << std::endl;     \
+		dstream << FUNCTION_NAME << ": peer was not found" << std::endl;     \
 		lua_pushnil(L); /* error */                                            \
 		return 1;                                                              \
 	}
 
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::MIN_RTT,&min_rtt))
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::MAX_RTT,&max_rtt))
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::AVG_RTT,&avg_rtt))
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::MIN_JITTER,&min_jitter))
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::MAX_JITTER,&max_jitter))
-	ERET(getServer(L)->getClientConInfo(player->peer_id,con::AVG_JITTER,&avg_jitter))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::MIN_RTT, &min_rtt))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::MAX_RTT, &max_rtt))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::AVG_RTT, &avg_rtt))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::MIN_JITTER,
+		&min_jitter))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::MAX_JITTER,
+		&max_jitter))
+	ERET(getServer(L)->getClientConInfo(player->getPeerId(), con::AVG_JITTER,
+		&avg_jitter))
 
-	ERET(getServer(L)->getClientInfo(player->peer_id,
-										&state, &uptime, &ser_vers, &prot_vers,
-										&major, &minor, &patch, &vers_string))
+	ERET(getServer(L)->getClientInfo(player->getPeerId(), &state, &uptime, &ser_vers,
+		&prot_vers, &major, &minor, &patch, &vers_string))
 
 	lua_newtable(L);
 	int table = lua_gettop(L);
@@ -209,13 +229,17 @@ int ModApiServer::l_get_player_information(lua_State *L)
 	lua_pushnumber(L, uptime);
 	lua_settable(L, table);
 
+	lua_pushstring(L,"protocol_version");
+	lua_pushnumber(L, prot_vers);
+	lua_settable(L, table);
+
+	lua_pushstring(L, "formspec_version");
+	lua_pushnumber(L, player->formspec_version);
+	lua_settable(L, table);
+
 #ifndef NDEBUG
 	lua_pushstring(L,"serialization_version");
 	lua_pushnumber(L, ser_vers);
-	lua_settable(L, table);
-
-	lua_pushstring(L,"protocol_version");
-	lua_pushnumber(L, prot_vers);
 	lua_settable(L, table);
 
 	lua_pushstring(L,"major");
@@ -265,21 +289,19 @@ int ModApiServer::l_ban_player(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
 	const char * name = luaL_checkstring(L, 1);
-	Player *player = getEnv(L)->getPlayer(name);
-	if(player == NULL)
-	{
+	RemotePlayer *player = dynamic_cast<ServerEnvironment *>(getEnv(L))->getPlayer(name);
+	if (player == NULL) {
 		lua_pushboolean(L, false); // no such player
 		return 1;
 	}
 	try
 	{
-		Address addr = getServer(L)->getPeerAddress(getEnv(L)->getPlayer(name)->peer_id);
+		Address addr = getServer(L)->getPeerAddress(
+			dynamic_cast<ServerEnvironment *>(getEnv(L))->getPlayer(name)->getPeerId());
 		std::string ip_str = addr.serializeString();
 		getServer(L)->setIpBanned(ip_str, name);
-	}
-	catch(con::PeerNotFoundException) // unlikely
-	{
-		dstream << __FUNCTION_NAME << ": peer was not found" << std::endl;
+	} catch(const con::PeerNotFoundException &) {
+		dstream << FUNCTION_NAME << ": peer was not found" << std::endl;
 		lua_pushboolean(L, false); // error
 		return 1;
 	}
@@ -292,23 +314,35 @@ int ModApiServer::l_kick_player(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
 	const char *name = luaL_checkstring(L, 1);
-	std::string message;
+	std::string message("Kicked");
 	if (lua_isstring(L, 2))
-	{
-		message = std::string("Kicked: ") + lua_tostring(L, 2);
-	}
+		message.append(": ").append(readParam<std::string>(L, 2));
 	else
-	{
-		message = "Kicked.";
-	}
-	Player *player = getEnv(L)->getPlayer(name);
-	if (player == NULL)
-	{
+		message.append(".");
+
+	RemotePlayer *player = dynamic_cast<ServerEnvironment *>(getEnv(L))->getPlayer(name);
+	if (player == NULL) {
 		lua_pushboolean(L, false); // No such player
 		return 1;
 	}
-	getServer(L)->DenyAccess_Legacy(player->peer_id, narrow_to_wide(message));
+	getServer(L)->DenyAccess_Legacy(player->getPeerId(), utf8_to_wide(message));
 	lua_pushboolean(L, true);
+	return 1;
+}
+
+int ModApiServer::l_remove_player(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	std::string name = luaL_checkstring(L, 1);
+	ServerEnvironment *s_env = dynamic_cast<ServerEnvironment *>(getEnv(L));
+	assert(s_env);
+
+	RemotePlayer *player = s_env->getPlayer(name.c_str());
+	if (!player)
+		lua_pushinteger(L, s_env->removePlayerFromDatabase(name) ? 0 : 1);
+	else
+		lua_pushinteger(L, 2);
+
 	return 1;
 }
 
@@ -343,7 +377,7 @@ int ModApiServer::l_show_formspec(lua_State *L)
 int ModApiServer::l_get_current_modname(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
-	lua_getfield(L, LUA_REGISTRYINDEX, SCRIPT_MOD_NAME_FIELD);
+	lua_rawgeti(L, LUA_REGISTRYINDEX, CUSTOM_RIDX_CURRENT_MOD_NAME);
 	return 1;
 }
 
@@ -379,7 +413,7 @@ int ModApiServer::l_get_modnames(lua_State *L)
 	// Package them up for Lua
 	lua_createtable(L, modlist.size(), 0);
 	std::vector<std::string>::iterator iter = modlist.begin();
-	for (u16 i = 0; iter != modlist.end(); iter++) {
+	for (u16 i = 0; iter != modlist.end(); ++iter) {
 		lua_pushstring(L, iter->c_str());
 		lua_rawseti(L, -2, ++i);
 	}
@@ -417,6 +451,16 @@ int ModApiServer::l_sound_stop(lua_State *L)
 	return 0;
 }
 
+int ModApiServer::l_sound_fade(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+	s32 handle = luaL_checkinteger(L, 1);
+	float step = readParam<float>(L, 2);
+	float gain = readParam<float>(L, 3);
+	getServer(L)->fadeSound(handle, step, gain);
+	return 0;
+}
+
 // is_singleplayer()
 int ModApiServer::l_is_singleplayer(lua_State *L)
 {
@@ -429,47 +473,43 @@ int ModApiServer::l_is_singleplayer(lua_State *L)
 int ModApiServer::l_notify_authentication_modified(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
-	std::string name = "";
+	std::string name;
 	if(lua_isstring(L, 1))
-		name = lua_tostring(L, 1);
+		name = readParam<std::string>(L, 1);
 	getServer(L)->reportPrivsModified(name);
 	return 0;
 }
 
-#ifndef NDEBUG
-// cause_error(type_of_error)
-int ModApiServer::l_cause_error(lua_State *L)
+// get_last_run_mod()
+int ModApiServer::l_get_last_run_mod(lua_State *L)
 {
 	NO_MAP_LOCK_REQUIRED;
-	std::string type_of_error = "none";
-	if(lua_isstring(L, 1))
-		type_of_error = lua_tostring(L, 1);
-
-	errorstream << "Error handler test called, errortype=" << type_of_error << std::endl;
-
-	if(type_of_error == "segv") {
-		volatile int* some_pointer = 0;
-		errorstream << "Cause a sigsegv now: " << (*some_pointer) << std::endl;
-
-	} else if (type_of_error == "zerodivision") {
-
-		unsigned int some_number = porting::getTimeS();
-		unsigned int zerovalue = 0;
-		unsigned int result = some_number / zerovalue;
-		errorstream << "Well this shouldn't ever be shown: " << result << std::endl;
-
-	} else if (type_of_error == "exception") {
-		throw BaseException("Errorhandler test fct called");
+	lua_rawgeti(L, LUA_REGISTRYINDEX, CUSTOM_RIDX_CURRENT_MOD_NAME);
+	std::string current_mod = readParam<std::string>(L, -1, "");
+	if (current_mod.empty()) {
+		lua_pop(L, 1);
+		lua_pushstring(L, getScriptApiBase(L)->getOrigin().c_str());
 	}
+	return 1;
+}
 
+// set_last_run_mod(modname)
+int ModApiServer::l_set_last_run_mod(lua_State *L)
+{
+	NO_MAP_LOCK_REQUIRED;
+#ifdef SCRIPTAPI_DEBUG
+	const char *mod = lua_tostring(L, 1);
+	getScriptApiBase(L)->setOriginDirect(mod);
+	//printf(">>>> last mod set from Lua: %s\n", mod);
+#endif
 	return 0;
 }
-#endif
 
 void ModApiServer::Initialize(lua_State *L, int top)
 {
 	API_FCT(request_shutdown);
 	API_FCT(get_server_status);
+	API_FCT(get_server_uptime);
 	API_FCT(get_worldpath);
 	API_FCT(is_singleplayer);
 
@@ -477,11 +517,14 @@ void ModApiServer::Initialize(lua_State *L, int top)
 	API_FCT(get_modpath);
 	API_FCT(get_modnames);
 
+	API_FCT(print);
+
 	API_FCT(chat_send_all);
 	API_FCT(chat_send_player);
 	API_FCT(show_formspec);
 	API_FCT(sound_play);
 	API_FCT(sound_stop);
+	API_FCT(sound_fade);
 
 	API_FCT(get_player_information);
 	API_FCT(get_player_privs);
@@ -490,10 +533,10 @@ void ModApiServer::Initialize(lua_State *L, int top)
 	API_FCT(get_ban_description);
 	API_FCT(ban_player);
 	API_FCT(kick_player);
+	API_FCT(remove_player);
 	API_FCT(unban_player_or_ip);
 	API_FCT(notify_authentication_modified);
 
-#ifndef NDEBUG
-	API_FCT(cause_error);
-#endif
+	API_FCT(get_last_run_mod);
+	API_FCT(set_last_run_mod);
 }

@@ -1,18 +1,18 @@
 --Minetest
 --Copyright (C) 2014 sapier
 --
---self program is free software; you can redistribute it and/or modify
+--This program is free software; you can redistribute it and/or modify
 --it under the terms of the GNU Lesser General Public License as published by
 --the Free Software Foundation; either version 2.1 of the License, or
 --(at your option) any later version.
 --
---self program is distributed in the hope that it will be useful,
+--This program is distributed in the hope that it will be useful,
 --but WITHOUT ANY WARRANTY; without even the implied warranty of
 --MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 --GNU Lesser General Public License for more details.
 --
 --You should have received a copy of the GNU Lesser General Public License along
---with self program; if not, write to the Free Software Foundation, Inc.,
+--with this program; if not, write to the Free Software Foundation, Inc.,
 --51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 ui = {}
@@ -23,7 +23,7 @@ ui.default = nil
 function ui.add(child)
 	--TODO check child
 	ui.childlist[child.name] = child
-	
+
 	return child.name
 end
 
@@ -33,7 +33,7 @@ function ui.delete(child)
 	if ui.childlist[child.name] == nil then
 		return false
 	end
-	
+
 	ui.childlist[child.name] = nil
 	return true
 end
@@ -54,17 +54,39 @@ end
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 
---------------------------------------------------------------------------------
 function ui.update()
-	local formspec = ""
+	local formspec = {}
 
 	-- handle errors
-	if gamedata ~= nil and gamedata.errormessage ~= nil then
-		formspec = "size[12,3.2]" ..
-			"textarea[1,1;10,2;;ERROR: " ..
-			core.formspec_escape(gamedata.errormessage) ..
-			";]"..
-			"button[4.5,2.5;3,0.5;btn_error_confirm;" .. fgettext("Ok") .. "]"
+	if gamedata ~= nil and gamedata.reconnect_requested then
+		local error_message = core.formspec_escape(
+				gamedata.errormessage or "<none available>")
+		formspec = {
+			"size[14,8]",
+			"real_coordinates[true]",
+			"box[0.5,1.2;13,5;#000]",
+			("textarea[0.5,1.2;13,5;;%s;%s]"):format(
+				fgettext("The server has requested a reconnect:"), error_message),
+			"button[2,6.6;4,1;btn_reconnect_yes;" .. fgettext("Reconnect") .. "]",
+			"button[8,6.6;4,1;btn_reconnect_no;" .. fgettext("Main menu") .. "]"
+		}
+	elseif gamedata ~= nil and gamedata.errormessage ~= nil then
+		local error_message = core.formspec_escape(gamedata.errormessage)
+
+		local error_title
+		if string.find(gamedata.errormessage, "ModError") then
+			error_title = fgettext("An error occurred in a Lua script:")
+		else
+			error_title = fgettext("An error occurred:")
+		end
+		formspec = {
+			"size[14,8]",
+			"real_coordinates[true]",
+			"box[0.5,1.2;13,5;#000]",
+			("textarea[0.5,1.2;13,5;;%s;%s]"):format(
+				error_title, error_message),
+			"button[5,6.6;4,1;btn_error_confirm;" .. fgettext("Ok") .. "]"
+		}
 	else
 		local active_toplevel_ui_elements = 0
 		for key,value in pairs(ui.childlist) do
@@ -72,12 +94,12 @@ function ui.update()
 				local retval = value:get_formspec()
 
 				if retval ~= nil and retval ~= "" then
-					active_toplevel_ui_elements = active_toplevel_ui_elements +1
-					formspec = formspec .. retval
+					active_toplevel_ui_elements = active_toplevel_ui_elements + 1
+					table.insert(formspec, retval)
 				end
 			end
 		end
-		
+
 		-- no need to show addons if there ain't a toplevel element
 		if (active_toplevel_ui_elements > 0) then
 			for key,value in pairs(ui.childlist) do
@@ -85,34 +107,29 @@ function ui.update()
 					local retval = value:get_formspec()
 
 					if retval ~= nil and retval ~= "" then
-						formspec = formspec .. retval
+						table.insert(formspec, retval)
 					end
 				end
 			end
 		end
 
 		if (active_toplevel_ui_elements > 1) then
-			print("WARNING: ui manager detected more then one active ui element, self most likely isn't intended")
+			core.log("warning", "more than one active ui "..
+				"element, self most likely isn't intended")
 		end
 
 		if (active_toplevel_ui_elements == 0) then
-			print("WARNING: not a single toplevel ui element active switching to default")
+			core.log("warning", "no toplevel ui element "..
+					"active; switching to default")
 			ui.childlist[ui.default]:show()
-			formspec = ui.childlist[ui.default]:get_formspec()
+			formspec = {ui.childlist[ui.default]:get_formspec()}
 		end
 	end
-	core.update_formspec(formspec)
+	core.update_formspec(table.concat(formspec))
 end
 
 --------------------------------------------------------------------------------
 function ui.handle_buttons(fields)
-
-	if fields["btn_error_confirm"] then
-		gamedata.errormessage = nil
-		update_menu()
-		return
-	end
-
 	for key,value in pairs(ui.childlist) do
 
 		local retval = value:handle_buttons(fields)
@@ -127,7 +144,7 @@ end
 
 --------------------------------------------------------------------------------
 function ui.handle_events(event)
-	
+
 	for key,value in pairs(ui.childlist) do
 
 		if value.handle_events ~= nil then
@@ -146,8 +163,15 @@ end
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 core.button_handler = function(fields)
-	if fields["btn_error_confirm"] then
+	if fields["btn_reconnect_yes"] then
+		gamedata.reconnect_requested = false
 		gamedata.errormessage = nil
+		gamedata.do_reconnect = true
+		core.start()
+		return
+	elseif fields["btn_reconnect_no"] or fields["btn_error_confirm"] then
+		gamedata.errormessage = nil
+		gamedata.reconnect_requested = false
 		ui.update()
 		return
 	end

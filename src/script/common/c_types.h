@@ -17,8 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef C_TYPES_H_
-#define C_TYPES_H_
+#pragma once
 
 extern "C" {
 #include "lua.h"
@@ -52,13 +51,11 @@ public:
 	}
 };
 
-class LuaError : public ServerError
+class LuaError : public ModError
 {
 public:
-	LuaError(const std::string &s) : ServerError(s) {}
+	LuaError(const std::string &s) : ModError(s) {}
 };
 
 
 extern EnumString es_ItemType[];
-
-#endif /* C_TYPES_H_ */

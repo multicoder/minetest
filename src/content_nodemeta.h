@@ -17,14 +17,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef CONTENT_NODEMETA_HEADER
-#define CONTENT_NODEMETA_HEADER
+#pragma once
 
 #include <iostream>
 
 class NodeMetadataList;
 class NodeTimerList;
-class IGameDef;
+class IItemDefManager;
 
 /*
 	Legacy nodemeta definitions
@@ -32,9 +31,4 @@ class IGameDef;
 
 void content_nodemeta_deserialize_legacy(std::istream &is,
 		NodeMetadataList *meta, NodeTimerList *timers,
-		IGameDef *gamedef);
-
-void content_nodemeta_serialize_legacy(std::ostream &os, NodeMetadataList *meta);
-
-#endif
-
+		IItemDefManager *item_def_mgr);

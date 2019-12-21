@@ -20,10 +20,10 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "test.h"
 
 #include "exceptions.h"
-#include "mapgen.h"
+#include "objdef.h"
 
-
-class TestObjDef : public TestBase {
+class TestObjDef : public TestBase
+{
 public:
 	TestObjDef() { TestManager::registerTestModule(this); }
 	const char *getName() { return "TestObjDef"; }
@@ -60,7 +60,6 @@ void TestObjDef::testHandles()
 	UASSERTEQ(u32, 47, uid);
 	UASSERTEQ(ObjDefHandle, OBJDEF_ORE, type);
 }
-
 
 void TestObjDef::testAddGetSetClear()
 {

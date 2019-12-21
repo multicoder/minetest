@@ -17,28 +17,29 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef S_ENV_H_
-#define S_ENV_H_
+#pragma once
 
 #include "cpp_api/s_base.h"
 #include "irr_v3d.h"
 
 class ServerEnvironment;
-struct MapgenParams;
+struct ScriptCallbackState;
 
-class ScriptApiEnv
-		: virtual public ScriptApiBase
+class ScriptApiEnv : virtual public ScriptApiBase
 {
 public:
-	// On environment step
+	// Called on environment step
 	void environment_Step(float dtime);
-	// After generating a piece of map
-	void environment_OnGenerated(v3s16 minp, v3s16 maxp,u32 blockseed);
 
-	//called on player event
-	void player_event(ServerActiveObject* player, std::string type);
+	// Called after generating a piece of map
+	void environment_OnGenerated(v3s16 minp, v3s16 maxp, u32 blockseed);
+
+	// Called on player event
+	void player_event(ServerActiveObject *player, const std::string &type);
+
+	// Called after emerge of a block queued from core.emerge_area()
+	void on_emerge_area_completion(v3s16 blockpos, int action,
+		ScriptCallbackState *state);
 
 	void initializeEnvironment(ServerEnvironment *env);
 };
-
-#endif /* S_ENV_H_ */

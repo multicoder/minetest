@@ -23,8 +23,7 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NOISE_HEADER
-#define NOISE_HEADER
+#pragma once
 
 #include "irr_v3d.h"
 #include "exceptions.h"
@@ -102,28 +101,18 @@ private:
 #define NOISE_FLAG_SIMPLEX     0x10
 
 struct NoiseParams {
-	float offset;
-	float scale;
-	v3f spread;
-	s32 seed;
-	u16 octaves;
-	float persist;
-	float lacunarity;
-	u32 flags;
+	float offset = 0.0f;
+	float scale = 1.0f;
+	v3f spread = v3f(250, 250, 250);
+	s32 seed = 12345;
+	u16 octaves = 3;
+	float persist = 0.6f;
+	float lacunarity = 2.0f;
+	u32 flags = NOISE_FLAG_DEFAULTS;
 
-	NoiseParams()
-	{
-		offset     = 0.0f;
-		scale      = 1.0f;
-		spread     = v3f(250, 250, 250);
-		seed       = 12345;
-		octaves    = 3;
-		persist    = 0.6f;
-		lacunarity = 2.0f;
-		flags      = NOISE_FLAG_DEFAULTS;
-	}
+	NoiseParams() = default;
 
-	NoiseParams(float offset_, float scale_, v3f spread_, s32 seed_,
+	NoiseParams(float offset_, float scale_, const v3f &spread_, s32 seed_,
 		u16 octaves_, float persist_, float lacunarity_,
 		u32 flags_=NOISE_FLAG_DEFAULTS)
 	{
@@ -138,26 +127,19 @@ struct NoiseParams {
 	}
 };
 
-
-// Convenience macros for getting/setting NoiseParams in Settings as a string
-// WARNING:  Deprecated, use Settings::getNoiseParamsFromValue() instead
-#define NOISEPARAMS_FMT_STR "f,f,v3,s32,u16,f"
-//#define getNoiseParams(x, y) getStruct((x), NOISEPARAMS_FMT_STR, &(y), sizeof(y))
-//#define setNoiseParams(x, y) setStruct((x), NOISEPARAMS_FMT_STR, &(y))
-
 class Noise {
 public:
 	NoiseParams np;
-	int seed;
+	s32 seed;
 	u32 sx;
 	u32 sy;
 	u32 sz;
-	float *noise_buf;
-	float *gradient_buf;
-	float *persist_buf;
-	float *result;
+	float *noise_buf = nullptr;
+	float *gradient_buf = nullptr;
+	float *persist_buf = nullptr;
+	float *result = nullptr;
 
-	Noise(NoiseParams *np, int seed, u32 sx, u32 sy, u32 sz=1);
+	Noise(NoiseParams *np, s32 seed, u32 sx, u32 sy, u32 sz=1);
 	~Noise();
 
 	void setSize(u32 sx, u32 sy, u32 sz=1);
@@ -167,11 +149,11 @@ public:
 	void gradientMap2D(
 		float x, float y,
 		float step_x, float step_y,
-		int seed);
+		s32 seed);
 	void gradientMap3D(
 		float x, float y, float z,
 		float step_x, float step_y, float step_z,
-		int seed);
+		s32 seed);
 
 	float *perlinMap2D(float x, float y, float *persistence_map=NULL);
 	float *perlinMap3D(float x, float y, float z, float *persistence_map=NULL);
@@ -198,15 +180,16 @@ public:
 private:
 	void allocBuffers();
 	void resizeNoiseBuf(bool is3d);
-	void updateResults(float g, float *gmap, float *persistence_map, size_t bufsize);
+	void updateResults(float g, float *gmap, const float *persistence_map,
+			size_t bufsize);
 
 };
 
-float NoisePerlin2D(NoiseParams *np, float x, float y, int seed);
-float NoisePerlin3D(NoiseParams *np, float x, float y, float z, int seed);
+float NoisePerlin2D(NoiseParams *np, float x, float y, s32 seed);
+float NoisePerlin3D(NoiseParams *np, float x, float y, float z, s32 seed);
 
 inline float NoisePerlin2D_PO(NoiseParams *np, float x, float xoff,
-	float y, float yoff, int seed)
+	float y, float yoff, s32 seed)
 {
 	return NoisePerlin2D(np,
 		x + xoff * np->spread.X,
@@ -215,7 +198,7 @@ inline float NoisePerlin2D_PO(NoiseParams *np, float x, float xoff,
 }
 
 inline float NoisePerlin3D_PO(NoiseParams *np, float x, float xoff,
-	float y, float yoff, float z, float zoff, int seed)
+	float y, float yoff, float z, float zoff, s32 seed)
 {
 	return NoisePerlin3D(np,
 		x + xoff * np->spread.X,
@@ -225,22 +208,22 @@ inline float NoisePerlin3D_PO(NoiseParams *np, float x, float xoff,
 }
 
 // Return value: -1 ... 1
-float noise2d(int x, int y, int seed);
-float noise3d(int x, int y, int z, int seed);
+float noise2d(int x, int y, s32 seed);
+float noise3d(int x, int y, int z, s32 seed);
 
-float noise2d_gradient(float x, float y, int seed, bool eased=true);
-float noise3d_gradient(float x, float y, float z, int seed, bool eased=false);
+float noise2d_gradient(float x, float y, s32 seed, bool eased=true);
+float noise3d_gradient(float x, float y, float z, s32 seed, bool eased=false);
 
-float noise2d_perlin(float x, float y, int seed,
+float noise2d_perlin(float x, float y, s32 seed,
 		int octaves, float persistence, bool eased=true);
 
-float noise2d_perlin_abs(float x, float y, int seed,
+float noise2d_perlin_abs(float x, float y, s32 seed,
 		int octaves, float persistence, bool eased=true);
 
-float noise3d_perlin(float x, float y, float z, int seed,
+float noise3d_perlin(float x, float y, float z, s32 seed,
 		int octaves, float persistence, bool eased=false);
 
-float noise3d_perlin_abs(float x, float y, float z, int seed,
+float noise3d_perlin_abs(float x, float y, float z, s32 seed,
 		int octaves, float persistence, bool eased=false);
 
 inline float easeCurve(float t)
@@ -249,6 +232,3 @@ inline float easeCurve(float t)
 }
 
 float contour(float v);
-
-#endif
-

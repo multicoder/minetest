@@ -19,7 +19,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "lua_api/l_nodetimer.h"
 #include "lua_api/l_internal.h"
-#include "environment.h"
+#include "serverenvironment.h"
 #include "map.h"
 
 
@@ -39,27 +39,30 @@ NodeTimerRef* NodeTimerRef::checkobject(lua_State *L, int narg)
 
 int NodeTimerRef::l_set(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
-	f32 t = luaL_checknumber(L,2);
-	f32 e = luaL_checknumber(L,3);
-	env->getMap().setNodeTimer(o->m_p,NodeTimer(t,e));
+	f32 t = readParam<float>(L,2);
+	f32 e = readParam<float>(L,3);
+	env->getMap().setNodeTimer(NodeTimer(t, e, o->m_p));
 	return 0;
 }
 
 int NodeTimerRef::l_start(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
-	f32 t = luaL_checknumber(L,2);
-	env->getMap().setNodeTimer(o->m_p,NodeTimer(t,0));
+	f32 t = readParam<float>(L,2);
+	env->getMap().setNodeTimer(NodeTimer(t, 0, o->m_p));
 	return 0;
 }
 
 int NodeTimerRef::l_stop(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
@@ -69,6 +72,7 @@ int NodeTimerRef::l_stop(lua_State *L)
 
 int NodeTimerRef::l_is_started(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
@@ -80,6 +84,7 @@ int NodeTimerRef::l_is_started(lua_State *L)
 
 int NodeTimerRef::l_get_timeout(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
@@ -91,6 +96,7 @@ int NodeTimerRef::l_get_timeout(lua_State *L)
 
 int NodeTimerRef::l_get_elapsed(lua_State *L)
 {
+	MAP_LOCK_REQUIRED;
 	NodeTimerRef *o = checkobject(L, 1);
 	ServerEnvironment *env = o->m_env;
 	if(env == NULL) return 0;
@@ -104,10 +110,6 @@ int NodeTimerRef::l_get_elapsed(lua_State *L)
 NodeTimerRef::NodeTimerRef(v3s16 p, ServerEnvironment *env):
 	m_p(p),
 	m_env(env)
-{
-}
-
-NodeTimerRef::~NodeTimerRef()
 {
 }
 
@@ -156,7 +158,7 @@ void NodeTimerRef::Register(lua_State *L)
 }
 
 const char NodeTimerRef::className[] = "NodeTimerRef";
-const luaL_reg NodeTimerRef::methods[] = {
+const luaL_Reg NodeTimerRef::methods[] = {
 	luamethod(NodeTimerRef, start),
 	luamethod(NodeTimerRef, set),
 	luamethod(NodeTimerRef, stop),

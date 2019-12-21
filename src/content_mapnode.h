@@ -17,8 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef CONTENT_MAPNODE_HEADER
-#define CONTENT_MAPNODE_HEADER
+#pragma once
 
 #include "mapnode.h"
 
@@ -33,12 +32,3 @@ MapNode mapnode_translate_to_internal(MapNode n_from, u8 version);
 // Get legacy node name mapping for loading old blocks
 class NameIdMapping;
 void content_mapnode_get_name_id_mapping(NameIdMapping *nimap);
-
-// Convert "CONTENT_STONE"-style names to dynamic ids
-std::string content_mapnode_get_new_name(const std::string &oldname);
-class INodeDefManager;
-content_t legacy_get_id(const std::string &oldname, INodeDefManager *ndef);
-#define LEGN(ndef, oldname) legacy_get_id(oldname, ndef)
-
-#endif
-

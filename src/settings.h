@@ -17,16 +17,14 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef SETTINGS_HEADER
-#define SETTINGS_HEADER
+#pragma once
 
 #include "irrlichttypes_bloated.h"
 #include "util/string.h"
-#include "jthread/jmutex.h"
 #include <string>
-#include <map>
 #include <list>
 #include <set>
+#include <mutex>
 
 class Settings;
 struct NoiseParams;
@@ -35,8 +33,17 @@ struct NoiseParams;
 extern Settings *g_settings;
 extern std::string g_settings_path;
 
-/** function type to register a changed callback */
-typedef void (*setting_changed_callback)(const std::string, void*);
+// Type for a settings changed callback function
+typedef void (*SettingsChangedCallback)(const std::string &name, void *data);
+
+typedef std::vector<
+	std::pair<
+		SettingsChangedCallback,
+		void *
+	>
+> SettingsCallbackList;
+
+typedef std::unordered_map<std::string, SettingsCallbackList> SettingsCallbackMap;
 
 enum ValueType {
 	VALUETYPE_STRING,
@@ -65,33 +72,28 @@ struct ValueSpec {
 };
 
 struct SettingsEntry {
-	SettingsEntry()
-	{
-		group    = NULL;
-		is_group = false;
-	}
+	SettingsEntry() = default;
 
-	SettingsEntry(const std::string &value_)
-	{
-		value    = value_;
-		group    = NULL;
-		is_group = false;
-	}
+	SettingsEntry(const std::string &value_) :
+		value(value_)
+	{}
 
-	SettingsEntry(Settings *group_)
-	{
-		group    = group_;
-		is_group = true;
-	}
+	SettingsEntry(Settings *group_) :
+		group(group_),
+		is_group(true)
+	{}
 
-	std::string value;
-	Settings *group;
-	bool is_group;
+	std::string value = "";
+	Settings *group = nullptr;
+	bool is_group = false;
 };
+
+typedef std::unordered_map<std::string, SettingsEntry> SettingEntries;
 
 class Settings {
 public:
-	Settings() {}
+	Settings() = default;
+
 	~Settings();
 
 	Settings & operator += (const Settings &other);
@@ -118,8 +120,6 @@ public:
 
 	static bool checkNameValid(const std::string &name);
 	static bool checkValueValid(const std::string &value);
-	static std::string sanitizeName(const std::string &name);
-	static std::string sanitizeValue(const std::string &value);
 	static std::string getMultiline(std::istream &is, size_t *num_lines=NULL);
 	static void printEntry(std::ostream &os, const std::string &name,
 		const SettingsEntry &entry, u32 tab_depth=0);
@@ -129,11 +129,14 @@ public:
 	 ***********/
 
 	const SettingsEntry &getEntry(const std::string &name) const;
+	const SettingsEntry &getEntryDefault(const std::string &name) const;
 	Settings *getGroup(const std::string &name) const;
-	std::string get(const std::string &name) const;
+	const std::string &get(const std::string &name) const;
+	const std::string &getDefault(const std::string &name) const;
 	bool getBool(const std::string &name) const;
 	u16 getU16(const std::string &name) const;
 	s16 getS16(const std::string &name) const;
+	u32 getU32(const std::string &name) const;
 	s32 getS32(const std::string &name) const;
 	u64 getU64(const std::string &name) const;
 	float getFloat(const std::string &name) const;
@@ -159,8 +162,10 @@ public:
 	 ***************************************/
 
 	bool getEntryNoEx(const std::string &name, SettingsEntry &val) const;
+	bool getEntryDefaultNoEx(const std::string &name, SettingsEntry &val) const;
 	bool getGroupNoEx(const std::string &name, Settings *&val) const;
 	bool getNoEx(const std::string &name, std::string &val) const;
+	bool getDefaultNoEx(const std::string &name, std::string &val) const;
 	bool getFlag(const std::string &name) const;
 	bool getU16NoEx(const std::string &name, u16 &val) const;
 	bool getS16NoEx(const std::string &name, s16 &val) const;
@@ -209,26 +214,27 @@ public:
 	void clearDefaults();
 	void updateValue(const Settings &other, const std::string &name);
 	void update(const Settings &other);
-	void registerChangedCallback(std::string name, setting_changed_callback cbf, void *userdata = NULL);
-	void deregisterChangedCallback(std::string name, setting_changed_callback cbf, void *userdata = NULL);
+
+	void registerChangedCallback(const std::string &name,
+		SettingsChangedCallback cbf, void *userdata = NULL);
+	void deregisterChangedCallback(const std::string &name,
+		SettingsChangedCallback cbf, void *userdata = NULL);
 
 private:
-
 	void updateNoLock(const Settings &other);
 	void clearNoLock();
 	void clearDefaultsNoLock();
 
-	void doCallbacks(std::string name);
+	void doCallbacks(const std::string &name) const;
 
-	std::map<std::string, SettingsEntry> m_settings;
-	std::map<std::string, SettingsEntry> m_defaults;
+	SettingEntries m_settings;
+	SettingEntries m_defaults;
 
-	std::map<std::string, std::vector<std::pair<setting_changed_callback,void*> > > m_callbacks;
+	SettingsCallbackMap m_callbacks;
 
-	mutable JMutex m_callbackMutex;
-	mutable JMutex m_mutex; // All methods that access m_settings/m_defaults directly should lock this.
+	mutable std::mutex m_callback_mutex;
+
+	// All methods that access m_settings/m_defaults directly should lock this.
+	mutable std::mutex m_mutex;
 
 };
-
-#endif
-

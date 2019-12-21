@@ -15,8 +15,8 @@
 const char SHA256_version[] = "SHA-256" OPENSSL_VERSION_PTEXT;
 
 /* mem_clr.c */
-unsigned char cleanse_ctr = 0;
-void OPENSSL_cleanse(void *ptr, size_t len)
+unsigned static char cleanse_ctr = 0;
+static void OPENSSL_cleanse(void *ptr, size_t len)
 {
     unsigned char *p = ptr;
     size_t loop = len, ctr = cleanse_ctr;
@@ -29,11 +29,6 @@ void OPENSSL_cleanse(void *ptr, size_t len)
         ctr += (63 + (size_t)p);
     cleanse_ctr = (unsigned char)ctr;
 }
-
-# define fips_md_init(alg) fips_md_init_ctx(alg, alg)
-#  define fips_md_init_ctx(alg, cx) \
-        int alg##_Init(cx##_CTX *c)
-#  define fips_cipher_abort(alg) while(0)
 
 fips_md_init_ctx(SHA224, SHA256)
 {

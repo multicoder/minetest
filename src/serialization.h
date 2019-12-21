@@ -17,8 +17,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef SERIALIZATION_HEADER
-#define SERIALIZATION_HEADER
+#pragma once
 
 #include "irrlichttypes.h"
 #include "exceptions.h"
@@ -30,11 +29,11 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	--------------------------------
 
 	For map data (blocks, nodes, sectors).
-	
+
 	NOTE: The goal is to increment this so that saved maps will be
 	      loadable by any version. Other compatibility is not
 		  maintained.
-		  
+
 	0: original networked test with 1-byte nodes
 	1: update with 2-byte nodes
 	2: lighting is transmitted in param
@@ -62,36 +61,35 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 	24: 16-bit node ids and node timers (never released as stable)
 	25: Improved node timer format
 	26: Never written; read the same as 25
+	27: Added light spreading flags to blocks
+	28: Added "private" flag to NodeMetadata
 */
 // This represents an uninitialized or invalid format
 #define SER_FMT_VER_INVALID 255
 // Highest supported serialization version
-#define SER_FMT_VER_HIGHEST_READ 26
+#define SER_FMT_VER_HIGHEST_READ 28
 // Saved on disk version
-#define SER_FMT_VER_HIGHEST_WRITE 25
+#define SER_FMT_VER_HIGHEST_WRITE 28
 // Lowest supported serialization version
-#define SER_FMT_VER_LOWEST 0
-// Lowest client supported serialization version
+#define SER_FMT_VER_LOWEST_READ 0
+// Lowest serialization version for writing
 // Can't do < 24 anymore; we have 16-bit dynamically allocated node IDs
 // in memory; conversion just won't work in this direction.
-#define SER_FMT_CLIENT_VER_LOWEST 24
+#define SER_FMT_VER_LOWEST_WRITE 24
 
 inline bool ser_ver_supported(s32 v) {
-	return v >= SER_FMT_VER_LOWEST && v <= SER_FMT_VER_HIGHEST_READ;
+	return v >= SER_FMT_VER_LOWEST_READ && v <= SER_FMT_VER_HIGHEST_READ;
 }
 
 /*
 	Misc. serialization functions
 */
 
-void compressZlib(SharedBuffer<u8> data, std::ostream &os, int level = -1);
+void compressZlib(const u8 *data, size_t data_size, std::ostream &os, int level = -1);
 void compressZlib(const std::string &data, std::ostream &os, int level = -1);
 void decompressZlib(std::istream &is, std::ostream &os);
 
 // These choose between zlib and a self-made one according to version
-void compress(SharedBuffer<u8> data, std::ostream &os, u8 version);
+void compress(const SharedBuffer<u8> &data, std::ostream &os, u8 version);
 //void compress(const std::string &data, std::ostream &os, u8 version);
 void decompress(std::istream &is, std::ostream &os, u8 version);
-
-#endif
-
