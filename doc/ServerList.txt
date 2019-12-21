@@ -1,0 +1,50 @@
+This document exists to offer a basic overview of how the ServerList.cpp/.h function
+sendAnnounce
+Three announce actions appear to be valid, each of these has diffrent JSON command options:
+1. "start" (See line# 246 of ServerList.cpp)
+2. "update" (See line# of ServerList.cpp)
+3. "delete" (See line# 222 of ServerList.cpp)
+
+The following are sent for all of the above commands:
+    server["action"] = aa_names[action];
+    server["port"] = port;
+    //This is only sent of the value is set in settings
+    server["address"] = g_settings->get("server_address");
+
+If we are not doing the delete action then the following may be added to the JSON command (Depending on avialibity)
+    bool strict_checking = g_settings->getBool("strict_protocol_version_checking");
+		server["name"]         = g_settings->get("server_name");
+		server["description"]  = g_settings->get("server_description");
+		server["version"]      = g_version_string;
+		server["proto_min"]    = strict_checking ? LATEST_PROTOCOL_VERSION : SERVER_PROTOCOL_VERSION_MIN;
+		server["proto_max"]    = strict_checking ? LATEST_PROTOCOL_VERSION : SERVER_PROTOCOL_VERSION_MAX;
+		server["url"]          = g_settings->get("server_url");
+		server["creative"]     = g_settings->getBool("creative_mode");
+		server["damage"]       = g_settings->getBool("enable_damage");
+		server["password"]     = g_settings->getBool("disallow_empty_password");
+		server["pvp"]          = g_settings->getBool("enable_pvp");
+		server["uptime"]       = (int) uptime;
+		server["game_time"]    = game_time;
+		server["clients"]      = (int) clients_names.size();
+		server["clients_max"]  = g_settings->getU16("max_users");
+		server["clients_list"] = Json::Value(Json::arrayValue);
+    --A list of the clients currently on the server
+    for (const std::string &clients_name : clients_names) {
+			server["clients_list"].append(clients_name);
+		}
+    --If a game id exists it should be added
+    if (!gameid.empty())
+			  server["gameid"] = gameid;
+If the command is "start" then the following are sent as well
+    server["dedicated"]         = dedicated;
+		server["rollback"]          = g_settings->getBool("enable_rollback_recording");
+		server["mapgen"]            = mg_name;
+		server["privs"]             = g_settings->get("default_privs");
+		server["can_see_far_names"] = g_settings->getS16("player_transfer_distance") <= 0;
+		server["mods"]              = Json::Value(Json::arrayValue);
+		for (const ModSpec &mod : mods) {
+			server["mods"].append(mod.name);
+		}
+    
+If the command is "update" then a lag parameter may be sent:
+    server["lag"] = lag;
